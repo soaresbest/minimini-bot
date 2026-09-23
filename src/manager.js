@@ -1,22 +1,24 @@
 import mineflayer from 'mineflayer';
 import pathfinderPackage from 'mineflayer-pathfinder';
 import path from 'node:path';
+import { randomInt } from 'node:crypto';
 import { BotController } from './controller.js';
 import { extractMention, parseCommand, HELP, PLAYER_NAME } from './commands.js';
-import { saveConfig, validateConfig, configPath } from './config.js';
+import { saveConfig, validateConfig, configPath, serverKey } from './config.js';
 import { planActions, resolveProviderConfig, validatePlan } from './ai/planner.js';
 
 const MANAGEMENT = new Set(['mode', 'bots', 'botadd', 'botremove', 'botconfig']);
 const key = name => name.toLowerCase();
 
 export class BotManager {
-  constructor(config, { save = saveConfig, createBot = mineflayer.createBot, planner = planActions, Controller = BotController, log = console.log } = {}) {
+  constructor(config, { save = saveConfig, createBot = mineflayer.createBot, planner = planActions, Controller = BotController, log = console.log, registrationPassword = generateRegistrationPassword } = {}) {
     this.config = config;
     this.save = save;
     this.createBot = createBot;
     this.planner = planner;
     this.Controller = Controller;
     this.log = log;
+    this.registrationPassword = registrationPassword;
     this.records = new Map();
     this.identities = new Set();
     this.closing = false;
@@ -137,6 +139,31 @@ export class BotManager {
     this.mutations = next.catch(() => {});
     return next;
   }
+  async authenticateServer(controller, life) {
+    if (!this.config.server.registration || this.closing || controller.closed) return;
+    let password;
+    await this.mutate(async () => {
+      if (this.closing || controller.closed || controller.life !== life) return;
+      const server = serverKey(this.config.server);
+      const bot = key(controller.spec.name);
+      password = this.config.registrations[server]?.[bot];
+      if (!password) {
+        password = this.registrationPassword();
+        if (!/^\d{8}$/u.test(password)) throw new Error('Não foi possível gerar a senha de registro.');
+        const next = structuredClone(this.config);
+        next.registrations[server] ??= {};
+        Object.defineProperty(next.registrations[server], bot, {
+          value: password, enumerable: true, configurable: true, writable: true
+        });
+        const normalized = validateConfig(next);
+        await this.save(normalized);
+        this.config = normalized;
+      }
+    });
+    if (password && !this.closing && !controller.closed && controller.life === life) {
+      controller.scheduleServerAuthentication(password, life);
+    }
+  }
   async manage(controller, command) {
     if (command.type === 'bots') {
       controller.say(this.config.bots.map(spec => `${spec.name}: ${spec.mode}, ${this.records.get(key(spec.name))?.controller?.ready ? 'conectado' : 'conectando'}`).join('; '));
@@ -205,3 +232,7 @@ export class BotManager {
 }
 
 function safeErrorCode(code) { return typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? code : 'conexão interrompida'; }
+
+export function generateRegistrationPassword() {
+  return randomInt(100_000_000).toString().padStart(8, '0');
+}

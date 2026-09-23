@@ -26,9 +26,10 @@ test('configuração mínima recebe defaults sem alterar o objeto original', () 
   const raw = base();
   const config = validateConfig(raw);
   assert.equal(config.schemaVersion, 1);
-  assert.deepEqual(config.server, { host: 'localhost', port: 25565, version: 'auto' });
+  assert.deepEqual(config.server, { host: 'localhost', port: 25565, version: 'auto', registration: true });
   assert.deepEqual(config.bots, [{ name: 'bot1', username: 'bot1', auth: 'offline', mode: 'default' }]);
   assert.deepEqual(config.access, { allowedPlayers: [], ignoredPlayers: [] });
+  assert.deepEqual(config.registrations, {});
   assert.equal(config.settings.maxBots, 8);
   assert.equal(config.settings.autoEatAt, 16);
   assert.deepEqual(Object.keys(config.llm.providers).sort(), ['claude', 'gemini', 'grok', 'openai']);
@@ -65,6 +66,21 @@ test('rejeita configuração inválida com mensagens úteis', () => {
   assert.throws(() => validateConfig({ ...base(), settings: { maxBots: 1 }, bots: [{ name: 'one' }, { name: 'two' }] }), /maxBots/u);
   assert.throws(() => validateConfig({ ...base(), access: { allowedPlayers: ['*'] } }), /Jogadores autorizados/u);
   assert.throws(() => validateConfig({ ...base(), llm: { provider: 'unknown' } }), /openai, gemini, grok ou claude/u);
+  assert.throws(() => validateConfig({ ...base(), server: { host: 'localhost', registration: 'sim' } }), /true ou false/u);
+  assert.throws(() => validateConfig({ ...base(), registrations: { 'localhost:25565': { bot1: '1234567x' } } }), /exatamente 8 dígitos/u);
+});
+
+test('preserva senhas de registro por servidor e nome do bot', () => {
+  const raw = base();
+  raw.registrations = {
+    'Example.COM:25565': { Bot1: '00123456', bot2: '87654321' },
+    '[::1]:25566': { Bot1: '11112222' }
+  };
+  const registrations = validateConfig(raw).registrations;
+  assert.deepEqual(registrations, {
+    'example.com:25565': { bot1: '00123456', bot2: '87654321' },
+    '[::1]:25566': { bot1: '11112222' }
+  });
 });
 
 test('conta Microsoft fica separada do nome usado no chat', () => {

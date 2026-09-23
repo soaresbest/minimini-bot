@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { BotManager } from '../src/manager.js';
+import { BotManager, generateRegistrationPassword } from '../src/manager.js';
 import { BotController, bestWeapon } from '../src/controller.js';
 import { validateConfig } from '../src/config.js';
 
@@ -25,7 +25,7 @@ function fakeBot({ username = 'Bot1' } = {}) {
     players: { Alice: { username: 'Alice', entity: { id: 2, position: new Point(3, 64, 3) } }, Bot1: { username: 'Bot1' } },
     game: { dimension: 'overworld' }, registry: { foodsByName: { bread: { foodPoints: 5 } } },
     inventory: { items: () => [] }, pathfinder: { setGoal: (g) => { bot.currentGoal = g; }, setMovements: () => {} },
-    chat: () => {}, clearControlStates: () => {}, stopDigging: () => {}, loadPlugin: () => {},
+    sent: [], chat: message => bot.sent.push(message), clearControlStates: () => {}, stopDigging: () => {}, loadPlugin: () => {},
     equip: async item => { bot.heldItem = item; }, consume: async () => { bot.food = 20; }, lookAt: async () => {}, attack: e => { bot.attacked = e; },
     quit: () => { bot.emit('end'); }, end: () => { bot.emit('end'); }
   });
@@ -305,4 +305,71 @@ test('cancelar equip antes de colocar um bloco não coloca depois da conclusão 
   finish(); await delay(0);
   assert.equal(placed, false);
   assert.equal(h.controller.handBusy, false);
+});
+
+test('gera senha aleatória com exatamente 8 dígitos', () => {
+  for (let index = 0; index < 100; index++) assert.match(generateRegistrationPassword(), /^\d{8}$/u);
+});
+
+test('registro é salvo por servidor e bot antes de agendar os comandos', async () => {
+  const config = validateConfig({
+    server: { host: 'Example.COM', port: 25570 },
+    bots: [{ name: 'Bot1' }, { name: 'Bot2' }]
+  });
+  const saved = [];
+  const scheduled = [];
+  const events = [];
+  const passwords = ['00123456', '87654321'];
+  const manager = new BotManager(config, {
+    log: () => {}, save: async value => { events.push('save'); saved.push(structuredClone(value)); },
+    registrationPassword: () => passwords.shift()
+  });
+  const first = { spec: config.bots[0], closed: false, life: 1, scheduleServerAuthentication: password => { events.push('schedule'); scheduled.push(password); } };
+  await manager.authenticateServer(first, 1);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].registrations['example.com:25570'].bot1, '00123456');
+  assert.deepEqual(scheduled, ['00123456']);
+  assert.deepEqual(events, ['save', 'schedule']);
+  await manager.authenticateServer(first, 1);
+  assert.equal(saved.length, 1, 'a senha existente deve ser reutilizada sem nova gravação');
+  assert.deepEqual(scheduled, ['00123456', '00123456']);
+  const second = { spec: config.bots[1], closed: false, life: 1, scheduleServerAuthentication: password => scheduled.push(password) };
+  await manager.authenticateServer(second, 1);
+  assert.equal(saved.length, 2);
+  assert.equal(manager.config.registrations['example.com:25570'].bot2, '87654321');
+});
+
+test('controller envia /register e /login sem revelar a senha no chat normal', async t => {
+  const h = harness(); t.after(h.close);
+  h.controller.life = 4;
+  h.controller.scheduleServerAuthentication('00123456', 4, [0, 5]);
+  await delay(15);
+  assert.deepEqual(h.bot.sent, ['/register 00123456 00123456', '/login 00123456']);
+  assert.ok(h.said.every(message => !message.includes('00123456')));
+});
+
+test('registro desativado não gera nem envia senha', async () => {
+  const config = validateConfig({ server: { host: 'localhost', registration: false }, bots: [{ name: 'Bot1' }] });
+  let generated = false;
+  let scheduled = false;
+  const manager = new BotManager(config, {
+    save: async () => assert.fail('não deve salvar'), log: () => {},
+    registrationPassword: () => { generated = true; return '12345678'; }
+  });
+  await manager.authenticateServer({ spec: config.bots[0], closed: false, life: 1, scheduleServerAuthentication: () => { scheduled = true; } }, 1);
+  assert.equal(generated, false);
+  assert.equal(scheduled, false);
+});
+
+test('falha ao salvar impede o envio da senha ao servidor', async () => {
+  const config = baseConfig();
+  let scheduled = false;
+  const manager = new BotManager(config, {
+    log: () => {}, registrationPassword: () => '12345678',
+    save: async () => { throw new Error('disco indisponível'); }
+  });
+  const controller = { spec: config.bots[0], closed: false, life: 1, scheduleServerAuthentication: () => { scheduled = true; } };
+  await assert.rejects(() => manager.authenticateServer(controller, 1), /disco indisponível/u);
+  assert.equal(scheduled, false);
+  assert.deepEqual(manager.config.registrations, {});
 });

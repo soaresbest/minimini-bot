@@ -41,6 +41,8 @@ Somente mensagens com uma menção completa, como `@bot1`, ativam o bot. Os nome
 
 O bot confirma o recebimento e informa o progresso periodicamente, por padrão a cada 15 segundos. Comandos desconhecidos no modo simples recebem `Não entendi. Use help.`. Consultar `status` ou `help` preserva a tarefa atual. Um novo comando de ação substitui a tarefa anterior; `stop` tem prioridade sobre o intervalo entre comandos.
 
+Em servidores com plugin de autenticação, `server.registration: true` faz cada bot gerar uma senha aleatória de 8 dígitos na primeira conexão. A senha é salva por servidor e nome do bot em `~/.minimini-bot/config.json` antes do envio de `/register senha senha`; nas reconexões, o bot reutiliza a mesma senha com `/login senha`. A senha nunca aparece nos logs nem nas respostas normais do bot. Desative essa opção em servidores sem `/register`.
+
 `goto` usa caminhos sem quebrar ou colocar blocos automaticamente. Destinos impossíveis ou demorados geram uma resposta de falha. `follow` e `guard` são contínuos: um jogador conectado fora da distância de renderização será aguardado; se ele desconectar, o bot para. Esses comandos não teleportam entre dimensões.
 
 `guard` enfrenta mobs hostis a até 8 blocos do protegido e limita a perseguição a 16 blocos do bot. Nas versões que informam o autor do dano, também reage por até 10 segundos a um agressor identificado pelo servidor, inclusive um jogador. Jogadores próximos não são atacados apenas por estarem perto. Em protocolos antigos sem identificação do agressor, permanece a proteção contra mobs hostis. Bots gerenciados não são escolhidos como agressores. Sem arma no inventário, usa a mão.

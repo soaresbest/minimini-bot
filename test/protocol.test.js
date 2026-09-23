@@ -26,6 +26,7 @@ test('cliente Mineflayer real conecta offline e responde a menções pelo protoc
   const errors = [];
   let peer;
   let manager;
+  let savedConfig;
   server.on('error', (error) => errors.push(error));
   t.after(async () => {
     manager?.close();
@@ -56,7 +57,10 @@ test('cliente Mineflayer real conecta offline e responde a menções pelo protoc
     bots: [{ name: 'Bot1', auth: 'offline', mode: 'default' }],
     access: { ignoredPlayers: ['OtherBot'] }, settings: { commandCooldownMs: 0 },
   });
-  manager = new BotManager(config, { log: () => {}, save: async () => { throw new Error('Este teste não grava configurações.'); } });
+  manager = new BotManager(config, {
+    log: () => {}, registrationPassword: () => '00123456',
+    save: async value => { savedConfig = structuredClone(value); }
+  });
   manager.start();
   const record = manager.records.get('bot1');
   record.bot.on('error', (error) => errors.push(error));
@@ -69,6 +73,9 @@ test('cliente Mineflayer real conecta offline e responde a menções pelo protoc
   assert.ok(record.bot.players.Alice);
   assert.equal(record.bot.health, 18);
   assert.equal(record.bot.food, 20);
+  await waitUntil(() => received.includes('/login 00123456'), 'O bot deve registrar e autenticar pelo chat.', t.signal);
+  assert.ok(received.includes('/register 00123456 00123456'));
+  assert.equal(savedConfig.registrations[`127.0.0.1:${config.server.port}`].bot1, '00123456');
 
   // A fila real continua sendo usada, com um intervalo menor para o teste.
   record.controller.chat.intervalMs = 5;

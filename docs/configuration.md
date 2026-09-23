@@ -15,7 +15,8 @@ O arquivo fica na home do usuário que executa o programa:
   "server": {
     "host": "localhost",
     "port": 25565,
-    "version": "auto"
+    "version": "auto",
+    "registration": true
   },
   "bots": [
     {
@@ -45,11 +46,18 @@ O arquivo fica na home do usuário que executa o programa:
     "commandCooldownMs": 1000,
     "actionTimeoutMs": 120000,
     "autoEatAt": 16
+  },
+  "registrations": {
+    "localhost:25565": {
+      "bot1": "00123456"
+    }
   }
 }
 ```
 
 `server.host` recebe somente hostname ou IP; a porta fica em `server.port`. IPv6 é aceito com ou sem colchetes. `version: "auto"` detecta a versão do servidor; também é possível informar uma versão explícita suportada pelo Mineflayer. O projeto conecta a servidores Minecraft Java.
+
+`server.registration: true` habilita autenticação automática em plugins que usam `/register` e `/login`. Na primeira conexão, o programa gera uma senha aleatória de exatamente 8 dígitos, salva a configuração e somente depois envia `/register senha senha`, seguido de `/login senha`. Nas próximas conexões, reutiliza a senha salva. `registrations` separa as credenciais pelo endereço e porta do servidor e pelo campo `name` de cada bot. O exemplo `00123456` é fictício; não reutilize senhas reais nessa documentação. Para servidores sem esse plugin, defina `registration: false` ou responda `n` no assistente.
 
 `name` é o nome usado em menções, como `@bot1 status`, e deve ter de 1 a 16 letras, números ou `_`. Os nomes são únicos, sem diferenciar maiúsculas de minúsculas. `username` é o usuário usado na conexão. Em autenticação `offline`, ele pode ser omitido e recebe o mesmo valor de `name`; esse modo depende de o servidor aceitar autenticação offline.
 
@@ -70,7 +78,7 @@ Informe `apiKey` dentro da configuração do provedor ou use a variável de ambi
 
 O assistente oculta a digitação da chave. Enter mantém a chave já salva; `-` remove a chave do arquivo. Chaves fornecidas por variável de ambiente não são copiadas para o arquivo. O modo `ia` exige uma chave disponível para o provedor escolhido. `npm run configure` permite corrigir a chave mesmo quando a configuração existente tem bots em modo IA sem credenciais disponíveis.
 
-O JSON pode conter chaves em texto simples. Não o compartilhe nem o coloque no Git. A escrita é atômica. Em Linux/macOS, o arquivo é criado com permissão `0600` e o diretório padrão com `0700`. Um diretório novo de um caminho personalizado também é criado com `0700`; as permissões de diretórios personalizados já existentes são preservadas. No Windows, proteja a pasta com as permissões da sua conta. Um arquivo com JSON inválido não é sobrescrito pelo programa: corrija-o ou mova-o para um backup.
+O JSON pode conter chaves de IA e senhas de `/register` em texto simples. Não o compartilhe nem o coloque no Git. A escrita é atômica. Em Linux/macOS, o arquivo é criado com permissão `0600` e o diretório padrão com `0700`. Um diretório novo de um caminho personalizado também é criado com `0700`; as permissões de diretórios personalizados já existentes são preservadas. No Windows, proteja a pasta com as permissões da sua conta. Um arquivo com JSON inválido não é sobrescrito pelo programa: corrija-o ou mova-o para um backup.
 
 ## Acesso e sobrevivência
 

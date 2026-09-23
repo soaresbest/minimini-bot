@@ -28,11 +28,12 @@ export class BotController {
     this.pathFailure = false;
     this.lastProgress = Date.now();
     this.commandTimes = new Map();
+    this.serverAuthTimers = new Set();
     this.tickBusy = false;
     this.listeners = [];
     this.listen('spawn', () => this.onSpawn());
     this.listen('chat', (username, message) => { void manager.handleChat(this, username, message).catch(() => this.say('Não consegui concluir o comando.')); });
-    this.listen('death', () => { this.life++; this.ready = false; this.stop(); this.say('Morri. Aguardando renascer.'); });
+    this.listen('death', () => { this.life++; this.ready = false; this.clearServerAuthentication(); this.stop(); this.say('Morri. Aguardando renascer.'); });
     this.listen('path_update', result => { if (result.status === 'noPath' && !this.eating) this.pathFailure = true; });
     this.listen('entityHurt', (entity, source) => {
       const protectedEntity = this.following?.guard && this.findPlayer(this.following.player)?.entity;
@@ -59,8 +60,29 @@ export class BotController {
     movements.scafoldingBlocks = [];
     this.bot.pathfinder.setMovements(movements);
     this.manager.registerIdentity(this.bot.username);
+    const life = this.life;
+    void this.manager.authenticateServer(this, life).catch(() => {
+      if (!this.closed && this.life === life) this.manager.log(`[${this.spec.name}] não foi possível preparar o registro automático; nenhuma senha foi enviada.`);
+    });
     this.say(`Pronto! Modo ${this.spec.mode}. Use @${this.spec.name} help.`);
     this.manager.log(`[${this.spec.name}] conectado como ${this.bot.username}.`);
+  }
+  scheduleServerAuthentication(password, life = this.life, delays = [250, 750]) {
+    this.clearServerAuthentication();
+    const schedule = (command, wait) => {
+      const timer = setTimeout(() => {
+        this.serverAuthTimers.delete(timer);
+        if (this.ready && !this.closed && this.life === life) this.bot.chat(command);
+      }, wait);
+      timer.unref?.();
+      this.serverAuthTimers.add(timer);
+    };
+    schedule(`/register ${password} ${password}`, delays[0]);
+    schedule(`/login ${password}`, delays[1]);
+  }
+  clearServerAuthentication() {
+    for (const timer of this.serverAuthTimers) clearTimeout(timer);
+    this.serverAuthTimers.clear();
   }
   findPlayer(name) {
     return Object.entries(this.bot.players ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
@@ -314,6 +336,7 @@ export class BotController {
     this.closed = true;
     this.ready = false;
     this.stop();
+    this.clearServerAuthentication();
     clearInterval(this.tickTimer);
     this.chat.close();
     for (const [event, fn] of this.listeners) this.bot.removeListener(event, fn);

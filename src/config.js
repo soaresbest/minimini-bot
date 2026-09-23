@@ -57,6 +57,12 @@ function integer(value, label, fallback, minimum, maximum) {
   return result;
 }
 
+function boolean(value, label, fallback) {
+  const result = value === undefined ? fallback : value;
+  if (typeof result !== 'boolean') throw new ConfigError(`${label} deve ser true ou false.`);
+  return result;
+}
+
 function minecraftName(value, label) {
   const result = string(value, label);
   if (!MINECRAFT_NAME.test(result)) {
@@ -117,6 +123,36 @@ function playerList(value, label) {
     seen.add(key);
     return true;
   });
+}
+
+function define(target, property, value) {
+  Object.defineProperty(target, property, { value, enumerable: true, configurable: true, writable: true });
+}
+
+function registrationStore(value) {
+  const raw = object(value, 'Registros de servidor', {});
+  if (Object.keys(raw).length > 100) throw new ConfigError('Registros de servidor excedem o limite de 100 servidores.');
+  const registrations = {};
+  for (const [server, rawBots] of Object.entries(raw)) {
+    if (!/^[^\u0000-\u001f\u007f]{1,320}:\d{1,5}$/u.test(server)) throw new ConfigError('Identificador de servidor inválido nos registros.');
+    const bots = object(rawBots, 'Bots registrados');
+    if (Object.keys(bots).length > 64) throw new ConfigError('Registros de servidor excedem o limite de 64 bots.');
+    const normalizedBots = {};
+    for (const [name, password] of Object.entries(bots)) {
+      const botName = minecraftName(name, 'Nome do bot registrado').toLowerCase();
+      if (typeof password !== 'string' || !/^\d{8}$/u.test(password)) {
+        throw new ConfigError('Senha de registro inválida; ela deve conter exatamente 8 dígitos.');
+      }
+      define(normalizedBots, botName, password);
+    }
+    define(registrations, server.toLowerCase(), normalizedBots);
+  }
+  return registrations;
+}
+
+export function serverKey(server) {
+  const host = server.host.toLowerCase();
+  return `${host.includes(':') ? `[${host}]` : host}:${server.port}`;
 }
 
 /** Valida e devolve uma cópia normalizada; nunca copia chaves do ambiente. */
@@ -183,12 +219,14 @@ export function validateConfig(input, { requireAiKeys = true } = {}) {
     return result;
   });
   const rawAccess = object(config.access, 'Controle de acesso', {});
+  const registrations = registrationStore(config.registrations);
   return {
     schemaVersion: 1,
     server: {
       host: serverHost(server.host),
       port: integer(server.port, 'Porta do servidor', 25565, 1, 65535),
       version: serverVersion(server.version),
+      registration: boolean(server.registration, 'Registro automático do servidor', true),
     },
     bots,
     llm,
@@ -197,6 +235,7 @@ export function validateConfig(input, { requireAiKeys = true } = {}) {
       ignoredPlayers: playerList(rawAccess.ignoredPlayers, 'Jogadores ignorados'),
     },
     settings,
+    registrations,
   };
 }
 
@@ -294,6 +333,10 @@ async function configure(existing) {
   config.server.host = await askValidated('Endereço do servidor Minecraft', config.server.host ?? 'localhost', serverHost);
   config.server.port = await askValidated('Porta', String(config.server.port ?? 25565), (value) => integer(Number(value), 'Porta', 25565, 1, 65535));
   config.server.version = await askValidated('Versão do Minecraft (auto detecta)', config.server.version ?? 'auto', serverVersion);
+  config.server.registration = (await askValidated('Servidor usa /register e /login? (s/n)', config.server.registration === false ? 'n' : 's', (value) => {
+    if (!['s', 'n'].includes(value.toLowerCase())) throw new ConfigError('Responda s ou n.');
+    return value.toLowerCase();
+  })) === 's';
   const bot = config.bots[0] ?? {};
   const previousName = bot.name;
   bot.name = await askValidated('Nome para mencionar o primeiro bot no chat', bot.name ?? 'bot1', (value) => minecraftName(value, 'Nome do bot'));
