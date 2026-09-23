@@ -1,0 +1,19 @@
+{
+  "name": "minimini-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bots Minecraft gerenciados pelo chat, com comandos diretos e IA.",
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "start": "node src/index.js",
+    "configure": "node src/index.js --configure",
+    "check": "node scripts/check.js",
+    "test": "node --test",
+    "verify": "npm run check && npm test"
+  },
+  "dependencies": {
+    "mineflayer": "4.39.0",
+    "mineflayer-pathfinder": "2.4.5"
+  }
+}
