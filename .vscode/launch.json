@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Minimini Bot",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/index.js",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/scripts/vscode-node.sh",
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}\\scripts\\vscode-node.cmd"
+      },
+      "preLaunchTask": "Preparar Minimini Bot",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    }
+  ]
+}

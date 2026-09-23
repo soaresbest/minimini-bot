@@ -89,7 +89,7 @@ test('runtime recusa executável de outra versão do Node', { skip: !unix }, (t)
 });
 
 test('scripts Bash são sintaticamente válidos', { skip: !unix }, () => {
-  for (const script of ['install.sh', 'start.sh', 'install.command', 'start.command', 'scripts/runtime.sh']) {
+  for (const script of ['install.sh', 'start.sh', 'install.command', 'start.command', 'scripts/runtime.sh', 'scripts/vscode-prepare.sh', 'scripts/vscode-node.sh']) {
     const result = spawnSync('bash', ['-n', join(root, script)], { encoding: 'utf8' });
     assert.equal(result.status, 0, `${script}: ${result.stderr}`);
   }
@@ -100,7 +100,7 @@ const hasPowerShell = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']
 test('scripts PowerShell são sintaticamente válidos', { skip: !hasPowerShell }, () => {
   const result = spawnSync(powershell, ['-NoProfile', '-Command', `
     $failed = $false
-    foreach ($path in @('install.ps1', 'start.ps1', 'scripts/runtime.ps1')) {
+    foreach ($path in @('install.ps1', 'start.ps1', 'scripts/runtime.ps1', 'scripts/vscode-prepare.ps1')) {
       $tokens = $null
       $parseErrors = $null
       [System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) $path), [ref]$tokens, [ref]$parseErrors) | Out-Null
@@ -112,7 +112,21 @@ test('scripts PowerShell são sintaticamente válidos', { skip: !hasPowerShell }
 });
 
 test('PowerShell preserva mensagens UTF-8 no Windows PowerShell 5.1', () => {
-  for (const script of ['install.ps1', 'start.ps1', 'scripts/runtime.ps1']) {
+  for (const script of ['install.ps1', 'start.ps1', 'scripts/runtime.ps1', 'scripts/vscode-prepare.ps1']) {
     assert.deepEqual(readFileSync(join(root, script)).subarray(0, 3), Buffer.from([0xef, 0xbb, 0xbf]));
   }
+});
+
+test('configuração do VS Code prepara o ambiente e usa o terminal integrado', () => {
+  const launch = JSON.parse(readFileSync(join(root, '.vscode', 'launch.json'), 'utf8'));
+  const tasks = JSON.parse(readFileSync(join(root, '.vscode', 'tasks.json'), 'utf8'));
+  const configuration = launch.configurations.find((entry) => entry.name === 'Minimini Bot');
+  const task = tasks.tasks.find((entry) => entry.label === 'Preparar Minimini Bot');
+  assert.ok(configuration);
+  assert.equal(configuration.console, 'integratedTerminal');
+  assert.equal(configuration.preLaunchTask, task.label);
+  assert.match(configuration.runtimeExecutable, /vscode-node\.sh$/);
+  assert.match(configuration.windows.runtimeExecutable, /vscode-node\.cmd$/);
+  assert.equal(task.presentation.reveal, 'always');
+  assert.equal(task.presentation.focus, true);
 });

@@ -99,6 +99,18 @@ Use uma versão do Minecraft suportada pela versão fixada do Mineflayer. A conf
 
 ## Desenvolvimento e verificação
 
+### Executar com F5 no Visual Studio Code
+
+Abra a pasta raiz do projeto no Visual Studio Code e pressione **F5**. A configuração `Minimini Bot` faz o seguinte automaticamente:
+
+1. abre um terminal integrado para mostrar a preparação;
+2. procura uma instalação válida do Node.js 24, usando primeiro o runtime local do projeto;
+3. executa o instalador completo do sistema se o Node.js 24 não estiver disponível;
+4. verifica a árvore inteira de dependências e executa `npm ci` somente quando ela estiver ausente, inválida ou desatualizada;
+5. inicia `src/index.js` com o depurador no terminal integrado do próprio VS Code.
+
+Na primeira execução do bot, o mesmo terminal integrado solicita servidor, porta, nome e autenticação. Pontos de interrupção, pausa, inspeção de variáveis e reinício funcionam normalmente pelo depurador. Encerre com `Shift+F5` ou `Ctrl+C` no terminal. Não é necessário instalar extensões adicionais do VS Code.
+
 ```bash
 npm ci --ignore-scripts
 npm run verify

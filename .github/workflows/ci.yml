@@ -29,14 +29,14 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          for script in install.sh start.sh install.command start.command scripts/runtime.sh; do
+          for script in install.sh start.sh install.command start.command scripts/runtime.sh scripts/vscode-prepare.sh scripts/vscode-node.sh; do
             bash -n "$script"
           done
       - name: Sintaxe Windows PowerShell 5.1
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          foreach ($path in @('install.ps1', 'start.ps1', 'scripts/runtime.ps1')) {
+          foreach ($path in @('install.ps1', 'start.ps1', 'scripts/runtime.ps1', 'scripts/vscode-prepare.ps1')) {
             $tokens = $null
             $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $path), [ref]$tokens, [ref]$parseErrors) | Out-Null
