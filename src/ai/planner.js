@@ -112,7 +112,7 @@ export function validatePlan(value) {
 export const ACTION_CATALOG = Object.freeze({
   goto: 'pathfinder.goto(GoalNear): caminha até x,y,z; termina ao chegar ou falhar. Não quebra nem coloca blocos automaticamente.',
   follow: 'pathfinder.setGoal(GoalFollow): segue player conectado. É contínua e só pode ser a última ação.',
-  guard: 'Segue player conectado e defende de mobs hostis próximos com arma do inventário. Contínua, somente última ação.',
+  guard: 'Segue player conectado e defende de mobs hostis próximos e agressores identificados pelo servidor com arma do inventário. Contínua, somente última ação.',
   stop: 'Cancela movimento e tarefa; fica parado. Não desativa alimentação automática.',
   status: 'Informa vida, fome, tarefa e inventário atuais pelo chat.',
   help: 'Informa os comandos disponíveis pelo chat.',

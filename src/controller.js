@@ -15,6 +15,7 @@ export class BotController {
     this.manager = manager;
     this.chat = new ChatQueue(bot);
     this.ready = false;
+    this.life = 0;
     this.closed = false;
     this.task = 'parado';
     this.abort = null;
@@ -31,8 +32,13 @@ export class BotController {
     this.listeners = [];
     this.listen('spawn', () => this.onSpawn());
     this.listen('chat', (username, message) => { void manager.handleChat(this, username, message).catch(() => this.say('Não consegui concluir o comando.')); });
-    this.listen('death', () => { this.ready = false; this.stop(); this.say('Morri. Aguardando renascer.'); });
+    this.listen('death', () => { this.life++; this.ready = false; this.stop(); this.say('Morri. Aguardando renascer.'); });
     this.listen('path_update', result => { if (result.status === 'noPath' && !this.eating) this.pathFailure = true; });
+    this.listen('entityHurt', (entity, source) => {
+      const protectedEntity = this.following?.guard && this.findPlayer(this.following.player)?.entity;
+      if (!protectedEntity || entity?.id !== protectedEntity.id || !source?.position || source.id === protectedEntity.id || source.id === this.bot.entity.id || (source.username && this.manager.isBot(source.username))) return;
+      this.following.aggressor = { id: source.id, expires: Date.now() + 10000 };
+    });
     this.listen('end', () => this.close());
     this.tickTimer = setInterval(() => { void this.tick().catch(() => {}); }, 500);
     this.tickTimer.unref?.();
@@ -42,6 +48,7 @@ export class BotController {
   say(message, priority = false) { this.chat.say(message, priority); }
   onSpawn() {
     if (this.closed) return;
+    this.life++;
     this.stop();
     this.ready = true;
     const movements = new Movements(this.bot);
@@ -96,7 +103,12 @@ export class BotController {
   async useHand(fn, signal) {
     await this.waitForHand(signal);
     this.handBusy = true;
-    try { signal.throwIfAborted(); return await fn(); } finally { this.handBusy = false; }
+    // Keep the hand locked until the actual protocol operation settles, even if
+    // the caller has cancelled its wait. Already-sent packets cannot be undone.
+    const operation = (async () => {
+      try { signal.throwIfAborted(); return await fn(); } finally { this.handBusy = false; }
+    })();
+    return await abortable(operation, signal);
   }
   async executePlan(actions, work) {
     try {
@@ -135,11 +147,11 @@ export class BotController {
     const bounded = AbortSignal.any([signal, timeout]);
     if (action.type === 'goto') {
       this.task = `indo para ${action.x}, ${action.y}, ${action.z}`;
-      const target = this.vector(action.x, action.y, action.z);
       // GoalNear accounts for a standing player's fractional position.
-      this.setGoal(new goals.GoalNear(action.x, action.y, action.z, 1));
+      const goal = new goals.GoalNear(action.x, action.y, action.z, 1);
+      this.setGoal(goal);
       try {
-        while (this.bot.entity.position.distanceTo(target) > 1.6) {
+        while (!goal.isEnd(this.bot.entity.position.floored())) {
           bounded.throwIfAborted();
           if (this.pathFailure) throw new Error('não há caminho seguro até o destino');
           await delay(200, undefined, { signal: bounded });
@@ -148,6 +160,9 @@ export class BotController {
         if (timeout.aborted && !signal.aborted) throw new Error('tempo limite para chegar ao destino');
         throw error;
       }
+      signal.throwIfAborted();
+      this.goal = null;
+      this.bot.pathfinder.setGoal(null);
       return;
     }
     if (action.type === 'follow' || action.type === 'guard') {
@@ -159,7 +174,7 @@ export class BotController {
     }
     this.task = `${action.type}${action.item ? ` ${action.item}` : ''}`;
     if (action.type === 'wait') { await delay(action.seconds * 1000, undefined, { signal: bounded }); return; }
-    if (action.type === 'look') { await this.bot.lookAt(this.vector(action.x, action.y, action.z)); return; }
+    if (action.type === 'look') { await abortable(this.bot.lookAt(this.vector(action.x, action.y, action.z), true), bounded); return; }
     if (action.type === 'equip') {
       await this.useHand(async () => { await this.bot.equip(this.inventoryItem(action.item), 'hand'); }, bounded);
       return;
@@ -170,7 +185,7 @@ export class BotController {
       await this.useHand(async () => {
         const cancel = () => this.bot.stopDigging();
         bounded.addEventListener('abort', cancel, { once: true });
-        try { bounded.throwIfAborted(); await this.bot.dig(block); } finally { bounded.removeEventListener('abort', cancel); }
+        try { bounded.throwIfAborted(); await this.bot.dig(block, true); } finally { bounded.removeEventListener('abort', cancel); }
       }, bounded);
       return;
     }
@@ -182,7 +197,9 @@ export class BotController {
       await this.useHand(async () => {
         await this.bot.equip(this.inventoryItem(action.item), 'hand');
         bounded.throwIfAborted();
-        await this.bot.placeBlock(block, face);
+        // The pinned Mineflayer implementation exposes this variant to force
+        // immediate look, avoiding delayed placement after a cancelled turn.
+        await this.bot._placeBlockWithOptions(block, face, { forceLook: true, swingArm: 'right' });
       }, bounded);
       return;
     }
@@ -215,11 +232,13 @@ export class BotController {
     let target = player.entity;
     let threat = null;
     if (following.guard) {
-      threat = Object.values(this.bot.entities).filter(e => e !== this.bot.entity && HOSTILE.has(e.name) && e.position.distanceTo(player.entity.position) <= 8 && e.position.distanceTo(this.bot.entity.position) <= 16)
+      const aggressor = following.aggressor?.expires > Date.now() ? this.bot.entities[following.aggressor.id] : null;
+      if (aggressor?.position.distanceTo(player.entity.position) <= 8 && aggressor.position.distanceTo(this.bot.entity.position) <= 16) threat = aggressor;
+      threat ??= Object.values(this.bot.entities).filter(e => e !== this.bot.entity && HOSTILE.has(e.name) && e.position.distanceTo(player.entity.position) <= 8 && e.position.distanceTo(this.bot.entity.position) <= 16)
         .sort((a, b) => a.position.distanceTo(player.entity.position) - b.position.distanceTo(player.entity.position))[0];
       if (threat) target = threat;
     }
-    this.task = `${following.guard ? 'protegendo' : 'seguindo'} ${following.player}${threat ? ` contra ${threat.name}` : ''}`;
+    this.task = `${following.guard ? 'protegendo' : 'seguindo'} ${following.player}${threat ? ` contra ${threat.username ?? threat.name}` : ''}`;
     if (following.targetId !== target.id) {
       following.targetId = target.id;
       this.setGoal(new goals.GoalFollow(target, threat ? 2 : 2.5), true);
@@ -246,15 +265,16 @@ export class BotController {
       return;
     }
     this.eating = true;
+    const life = this.life;
     const previous = this.bot.heldItem;
     this.bot.pathfinder.setGoal(null);
     this.bot.clearControlStates();
     try {
       this.say(`Vou comer ${food.name}.`);
       await this.bot.equip(food, 'hand');
-      if (!this.ready || this.closed) return;
+      if (!this.ready || this.closed || this.life !== life) return;
       await this.bot.consume();
-      if (previous && this.bot.inventory.items().some(i => i.type === previous.type)) await this.bot.equip(previous, 'hand');
+      if (this.ready && !this.closed && this.life === life && previous && this.bot.inventory.items().some(i => i.type === previous.type)) await this.bot.equip(previous, 'hand');
     } catch { /* inventory or connection may change while eating */ }
     finally {
       this.eating = false;
@@ -298,6 +318,15 @@ export class BotController {
     this.chat.close();
     for (const [event, fn] of this.listeners) this.bot.removeListener(event, fn);
   }
+}
+
+function abortable(operation, signal) {
+  return new Promise((resolve, reject) => {
+    const cancel = () => reject(signal.reason ?? new Error('Ação cancelada'));
+    if (signal.aborted) cancel();
+    else signal.addEventListener('abort', cancel, { once: true });
+    Promise.resolve(operation).then(resolve, reject).finally(() => signal.removeEventListener('abort', cancel));
+  });
 }
 
 export function bestWeapon(items) {

@@ -17,10 +17,10 @@ class Point {
 function baseConfig(extra = {}) {
   return validateConfig({ server: { host: 'localhost' }, bots: [{ name: 'Bot1' }], settings: { commandCooldownMs: 0 }, ...extra });
 }
-function fakeBot() {
+function fakeBot({ username = 'Bot1' } = {}) {
   const bot = new EventEmitter();
   Object.assign(bot, {
-    username: 'Bot1', health: 20, food: 20, heldItem: null, targetDigBlock: null,
+    username, health: 20, food: 20, heldItem: null, targetDigBlock: null,
     entity: { id: 1, position: new Point() }, entities: {},
     players: { Alice: { username: 'Alice', entity: { id: 2, position: new Point(3, 64, 3) } }, Bot1: { username: 'Bot1' } },
     game: { dimension: 'overworld' }, registry: { foodsByName: { bread: { foodPoints: 5 } } },
@@ -192,4 +192,117 @@ test('encerrar gerenciador impede reconexões e encerra todas as instâncias', t
   h.manager.close();
   assert.equal(h.manager.records.size, 0);
   assert.equal(record.removed, true);
+});
+
+test('alias de menção não bloqueia um jogador humano com o mesmo nome', async t => {
+  const h = harness({ bots: [{ name: 'Alice', username: 'helperMC' }] }); t.after(h.close);
+  assert.equal(h.manager.isBot('helperMC'), true);
+  assert.equal(h.manager.isBot('Alice'), false);
+  await h.manager.handleChat(h.controller, 'Alice', '@Alice status');
+  assert.match(h.said.at(-1), /Vida 20/);
+});
+
+test('goto com coordenadas fracionárias reconhece o mesmo destino do pathfinder', async t => {
+  const h = harness(); t.after(h.close);
+  h.bot.entity.position = new Point(100.5, 63, 100.5);
+  const work = h.controller.startWork('goto');
+  await h.controller.executePlan([{ type: 'goto', x: 100.9, y: 64.9, z: 100.9 }], work);
+  assert.equal(h.controller.task, 'parado');
+  assert.match(h.said.at(-1), /concluída/);
+  assert.equal(h.bot.currentGoal, null);
+});
+
+test('guard só reage a jogador agressor identificado e ignora bots conhecidos', async t => {
+  const h = harness(); t.after(h.close);
+  const bob = { id: 7, username: 'Bob', name: 'player', position: new Point(2, 64, 0) };
+  h.bot.entities[7] = bob;
+  const work = h.controller.startWork('guard');
+  await h.controller.executePlan([{ type: 'guard', player: 'Alice' }], work);
+  assert.equal(h.bot.attacked, undefined);
+  h.bot.emit('entityHurt', h.bot.players.Alice.entity, bob);
+  await h.controller.updateFollow();
+  assert.equal(h.bot.attacked, bob);
+  h.bot.attacked = null;
+  h.controller.following.aggressor.expires = 0;
+  h.manager.registerIdentity('Bob');
+  h.bot.emit('entityHurt', h.bot.players.Alice.entity, bob);
+  h.controller.lastAttack = 0;
+  await h.controller.updateFollow();
+  assert.equal(h.bot.attacked, null);
+});
+
+test('cancelar equip pendente encerra espera mas conserva trava até protocolo terminar', async t => {
+  const h = harness(); t.after(h.close);
+  h.bot.inventory.items = () => [{ name: 'iron_sword', type: 1 }];
+  let finish;
+  h.bot.equip = () => new Promise(resolve => { finish = resolve; });
+  const work = h.controller.startWork('equip');
+  const pending = h.controller.executePlan([{ type: 'equip', item: 'iron_sword' }], work);
+  await delay(0);
+  assert.equal(h.controller.handBusy, true);
+  h.controller.stop();
+  await pending;
+  assert.equal(h.controller.handBusy, true);
+  assert.equal(h.controller.task, 'parado');
+  finish(); await delay(0);
+  assert.equal(h.controller.handBusy, false);
+  assert.equal(h.controller.task, 'parado');
+});
+
+test('timeout de operação nativa pendente retorna falha e ignora conclusão tardia', async t => {
+  const h = harness(); t.after(h.close);
+  h.manager.config.settings.actionTimeoutMs = 20;
+  let finish;
+  h.bot.lookAt = () => new Promise(resolve => { finish = resolve; });
+  const keepAlive = setTimeout(() => {}, 1000); t.after(() => clearTimeout(keepAlive));
+  const work = h.controller.startWork('look');
+  await h.controller.executePlan([{ type: 'look', x: 1, y: 64, z: 1 }], work);
+  assert.match(h.said.at(-1), /tempo limite/);
+  assert.equal(h.controller.task, 'parado');
+  const before = h.said.length;
+  finish(); await delay(0);
+  assert.equal(h.said.length, before);
+});
+
+test('morte durante alimentação não restaura item nem tarefa da vida anterior', async t => {
+  const h = harness(); t.after(h.close);
+  const sword = { name: 'iron_sword', type: 1 };
+  const bread = { name: 'bread', type: 2 };
+  h.bot.heldItem = sword;
+  h.bot.inventory.items = () => [sword, bread];
+  h.bot.food = 10;
+  let finish;
+  h.bot.consume = () => new Promise(resolve => { finish = resolve; });
+  h.controller.setGoal({ old: true });
+  const pending = h.controller.eat();
+  await delay(0);
+  h.bot.emit('death');
+  assert.equal(h.controller.task, 'parado');
+  // Simula o respawn e um novo pedido antes da operação anterior terminar.
+  h.controller.life++;
+  h.controller.ready = true;
+  const newGoal = { current: true };
+  h.controller.setGoal(newGoal);
+  finish(); await pending;
+  assert.equal(h.bot.heldItem, bread);
+  assert.equal(h.bot.currentGoal, newGoal);
+  assert.equal(h.controller.eating, false);
+});
+
+test('cancelar equip antes de colocar um bloco não coloca depois da conclusão tardia', async t => {
+  const h = harness(); t.after(h.close);
+  h.bot.inventory.items = () => [{ name: 'stone', type: 1 }];
+  h.bot.blockAt = position => ({ name: position.y === 64 ? 'air' : 'stone', type: position.y === 64 ? 0 : 1, boundingBox: position.y === 64 ? 'empty' : 'block', position });
+  let placed = false;
+  let finish;
+  h.bot.equip = () => new Promise(resolve => { finish = resolve; });
+  h.bot._placeBlockWithOptions = async () => { placed = true; };
+  const work = h.controller.startWork('place');
+  const pending = h.controller.executePlan([{ type: 'place', x: 1, y: 63, z: 1, face: 'up', item: 'stone' }], work);
+  await delay(0);
+  h.controller.stop();
+  await pending;
+  finish(); await delay(0);
+  assert.equal(placed, false);
+  assert.equal(h.controller.handBusy, false);
 });

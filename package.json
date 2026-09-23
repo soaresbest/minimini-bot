@@ -4,7 +4,9 @@
   "private": true,
   "description": "Bots Minecraft gerenciados pelo chat, com comandos diretos e IA.",
   "type": "module",
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "start": "node src/index.js",
     "configure": "node src/index.js --configure",
@@ -16,5 +18,11 @@
     "mineflayer": "4.39.0",
     "mineflayer-pathfinder": "2.4.5"
   },
-  "overrides": { "uuid": "11.1.1" }
+  "overrides": {
+    "uuid": "11.1.1"
+  },
+  "devDependencies": {
+    "minecraft-data": "3.117.0",
+    "minecraft-protocol": "1.68.0"
+  }
 }

@@ -31,7 +31,7 @@ export function parseCommand(text) {
     const provider = args[2]?.toLowerCase();
     if (['ia', 'default'].includes(mode) && (!provider || ['openai', 'gemini', 'grok', 'claude'].includes(provider))) return { type, name: args[0], mode, provider };
   }
-  if (type === 'botconfig' && args.length === 3 && PLAYER_NAME.test(args[0]) && ['mode', 'provider', 'model'].includes(args[1].toLowerCase()) && /^[a-zA-Z0-9._:/-]{1,100}$/.test(args[2])) {
+  if (type === 'botconfig' && args.length === 3 && PLAYER_NAME.test(args[0]) && ['mode', 'provider', 'model'].includes(args[1].toLowerCase()) && /^[a-zA-Z0-9._:/-]{1,160}$/.test(args[2])) {
     return { type, name: args[0], key: args[1].toLowerCase(), value: args[2] };
   }
   return null;

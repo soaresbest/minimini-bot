@@ -39,7 +39,7 @@ A API devolve uma resposta curta e até oito ações ordenadas. O programa valid
 | --- | --- | --- |
 | `goto` | `x`, `y`, `z` | Caminha até a posição. |
 | `follow` | `player` | Segue jogador conectado; deve ser a última ação. |
-| `guard` | `player` | Segue e protege jogador de mobs hostis; deve ser a última ação. |
+| `guard` | `player` | Segue e protege de mobs hostis e de agressores identificados pelo servidor; deve ser a última ação. |
 | `stop` | Nenhum | Cancela a tarefa. |
 | `status` | Nenhum | Informa vida, fome, tarefa e itens. |
 | `help` | Nenhum | Informa comandos. |

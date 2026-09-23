@@ -2,9 +2,9 @@ import mineflayer from 'mineflayer';
 import pathfinderPackage from 'mineflayer-pathfinder';
 import path from 'node:path';
 import { BotController } from './controller.js';
-import { extractMention, parseCommand, HELP } from './commands.js';
+import { extractMention, parseCommand, HELP, PLAYER_NAME } from './commands.js';
 import { saveConfig, validateConfig, configPath } from './config.js';
-import { planActions, resolveProviderConfig } from './ai/planner.js';
+import { planActions, resolveProviderConfig, validatePlan } from './ai/planner.js';
 
 const MANAGEMENT = new Set(['mode', 'bots', 'botadd', 'botremove', 'botconfig']);
 const key = name => name.toLowerCase();
@@ -21,7 +21,7 @@ export class BotManager {
     this.identities = new Set();
     this.closing = false;
     this.mutations = Promise.resolve();
-    for (const spec of config.bots) { this.registerIdentity(spec.name); this.registerIdentity(spec.username); }
+    for (const spec of config.bots) if (spec.auth === 'offline') this.registerIdentity(spec.username);
   }
   registerIdentity(name) { if (name) this.identities.add(key(name)); }
   isBot(name) { return this.identities.has(key(name)) || this.config.access.ignoredPlayers.some(n => key(n) === key(name)); }
@@ -56,6 +56,7 @@ export class BotManager {
         }
       }, spec.auth === 'microsoft' ? 180000 : 45000);
       record.watchdog.unref?.();
+      bot.once('login', () => { if (PLAYER_NAME.test(bot.username)) this.registerIdentity(bot.username); });
       bot.once('spawn', () => { clearTimeout(record.watchdog); record.attempts = 0; });
       bot.on('error', error => this.log(`[${spec.name}] falha de conexão (${safeErrorCode(error.code)}). Confira endereço, versão e autenticação.`));
       bot.on('kicked', () => this.log(`[${spec.name}] desconectado pelo servidor. Confira whitelist, conta, versão e regras do servidor.`));
@@ -121,8 +122,9 @@ export class BotManager {
     const work = controller.startWork('interpretando pedido com IA');
     controller.say('Recebi seu pedido. Estou interpretando com IA.', true);
     try {
-      const plan = await this.planner({ config: this.config, botConfig: controller.spec, message: text, player: username, context: controller.context(), signal: work.signal });
+      const result = await this.planner({ config: this.config, botConfig: controller.spec, message: text, player: username, context: controller.context(), signal: work.signal });
       if (work.signal.aborted || controller.closed) return;
+      const plan = validatePlan(result);
       for (const action of plan.actions) if (action.player) controller.ensurePlayer(action.player);
       controller.say(plan.reply);
       await controller.executePlan(plan.actions, work);
@@ -157,8 +159,8 @@ export class BotManager {
         if (next.bots.length <= 1) throw new Error('Mantenha pelo menos um bot para receber comandos.');
         next.bots = next.bots.filter(b => b !== target);
         // Keep old names ignored across restarts so late chat cannot issue commands.
-        if (!next.access.ignoredPlayers.some(n => key(n) === key(target.name))) next.access.ignoredPlayers.push(target.name);
-        if (target.auth === 'offline' && !next.access.ignoredPlayers.some(n => key(n) === key(target.username))) next.access.ignoredPlayers.push(target.username);
+        const realName = this.records.get(key(target.name))?.bot?.username ?? (target.auth === 'offline' ? target.username : null);
+        if (realName && PLAYER_NAME.test(realName) && !next.access.ignoredPlayers.some(n => key(n) === key(realName))) next.access.ignoredPlayers.push(realName);
       } else {
         if (command.type === 'mode') target.mode = command.mode;
         else target[command.key] = command.value;
@@ -170,7 +172,7 @@ export class BotManager {
     this.config = normalized;
     if (command.type === 'botadd') {
       const spec = normalized.bots.find(b => key(b.name) === key(target.name));
-      this.registerIdentity(spec.name); this.registerIdentity(spec.username);
+      this.registerIdentity(spec.username);
       this.addConnection(spec);
       controller.say(`Bot ${spec.name} criado. Conectando...`);
     } else if (command.type === 'botremove') {
