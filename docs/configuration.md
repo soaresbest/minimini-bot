@@ -1,6 +1,6 @@
 # Configuração
 
-Na primeira execução em um terminal, o programa pergunta o servidor, a porta, a versão do Minecraft, o nome do primeiro bot, a autenticação e o modo inicial. A integração com IA é opcional. `npm run configure` abre o assistente novamente, preservando os outros bots e as preferências já salvas. O assistente mostra o destino antes de salvar.
+Na primeira execução em um terminal, o programa pergunta o servidor e a porta, consulta o status desse servidor e sugere a versão detectada. Depois pergunta o nome do primeiro bot, a autenticação e o modo inicial. A integração com IA é opcional. `npm run configure` abre o assistente novamente, preservando os outros bots e as preferências já salvas. O assistente mostra cada consulta e o destino antes de salvar.
 
 O arquivo fica na home do usuário que executa o programa:
 
@@ -15,7 +15,7 @@ O arquivo fica na home do usuário que executa o programa:
   "server": {
     "host": "localhost",
     "port": 25565,
-    "version": "auto",
+    "version": "1.21.11",
     "registration": true
   },
   "bots": [
@@ -55,7 +55,7 @@ O arquivo fica na home do usuário que executa o programa:
 }
 ```
 
-`server.host` recebe somente hostname ou IP; a porta fica em `server.port`. IPv6 é aceito com ou sem colchetes. `version: "auto"` detecta a versão do servidor; também é possível informar uma versão explícita suportada pelo Mineflayer. O projeto conecta a servidores Minecraft Java.
+`server.host` recebe somente hostname ou IP; a porta fica em `server.port`. IPv6 é aceito com ou sem colchetes. `server.version` guarda a versão exata detectada, incluindo o formato atual como `26.2`. O valor legado `"auto"` continua aceito: na próxima inicialização o programa consulta o protocolo, grava a versão explícita no arquivo e só então conecta. Se a versão for conhecida, mas os dados dela ainda não estiverem disponíveis nas dependências instaladas, o terminal explica a incompatibilidade e orienta atualizar pelo instalador ou pelo F5. O projeto conecta a servidores Minecraft Java.
 
 `server.registration: true` habilita autenticação automática em plugins que usam `/register` e `/login`. Na primeira conexão, o programa gera uma senha aleatória de exatamente 8 dígitos, salva a configuração e somente depois envia `/register senha senha`, seguido de `/login senha`. Nas próximas conexões, reutiliza a senha salva. `registrations` separa as credenciais pelo endereço e porta do servidor e pelo campo `name` de cada bot. O exemplo `00123456` é fictício; não reutilize senhas reais nessa documentação. Para servidores sem esse plugin, defina `registration: false` ou responda `n` no assistente.
 

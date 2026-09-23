@@ -1,5 +1,6 @@
-import { loadConfig, configPath } from './config.js';
+import { loadConfig, saveConfig, configPath } from './config.js';
 import { BotManager } from './manager.js';
+import { resolveServerVersion } from './server-version.js';
 
 async function main() {
   if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Este projeto requer Node.js 24. Execute o instalador do seu sistema.');
@@ -9,8 +10,9 @@ async function main() {
     return;
   }
   if (args.some(a => !['--configure', '--check-config'].includes(a))) throw new Error('Opção desconhecida. Use --help.');
-  const config = await loadConfig({ configure: args.includes('--configure') });
+  let config = await loadConfig({ configure: args.includes('--configure') });
   if (args.includes('--configure') || args.includes('--check-config')) { console.log(`Configuração válida: ${configPath()}`); return; }
+  config = await resolveServerVersion(config, { save: saveConfig });
   console.log(`Configuração carregada: ${configPath()}`);
   console.log('Use Ctrl+C para encerrar. Comandos no Minecraft: @nomeDoBot help');
   const manager = new BotManager(config);

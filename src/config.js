@@ -107,8 +107,8 @@ function serverHost(value) {
 
 function serverVersion(value) {
   const result = string(value, 'Versão do Minecraft', 'auto');
-  if (result !== 'auto' && !/^1\.\d{1,2}(?:\.\d{1,2})?$/u.test(result)) {
-    throw new ConfigError('Versão do Minecraft inválida; use auto ou uma versão como 1.21.11.');
+  if (result !== 'auto' && !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/u.test(result)) {
+    throw new ConfigError('Versão do Minecraft inválida; use auto ou uma versão como 1.21.11 ou 26.2.');
   }
   return result;
 }
@@ -332,7 +332,18 @@ async function configure(existing) {
   };
   config.server.host = await askValidated('Endereço do servidor Minecraft', config.server.host ?? 'localhost', serverHost);
   config.server.port = await askValidated('Porta', String(config.server.port ?? 25565), (value) => integer(Number(value), 'Porta', 25565, 1, 65535));
-  config.server.version = await askValidated('Versão do Minecraft (auto detecta)', config.server.version ?? 'auto', serverVersion);
+  let detectedVersion;
+  process.stdout.write(`Consultando a versão de ${config.server.host}:${config.server.port}...\n`);
+  try {
+    const { detectServerVersion } = await import('./server-version.js');
+    const detected = await detectServerVersion(config.server);
+    detectedVersion = detected.version;
+    process.stdout.write(`Servidor identificado como ${detected.serverName} (protocolo ${detected.protocol}); versão ${detected.version}.\n`);
+    if (!detected.supported) process.stdout.write('Aviso: esta versão ainda não é suportada pelas dependências instaladas.\n');
+  } catch (error) {
+    process.stdout.write(`Não foi possível detectar automaticamente: ${error.message}.\n`);
+  }
+  config.server.version = await askValidated('Versão do Minecraft', detectedVersion ?? (config.server.version === 'auto' ? undefined : config.server.version) ?? 'auto', serverVersion);
   config.server.registration = (await askValidated('Servidor usa /register e /login? (s/n)', config.server.registration === false ? 'n' : 's', (value) => {
     if (!['s', 'n'].includes(value.toLowerCase())) throw new ConfigError('Responda s ou n.');
     return value.toLowerCase();

@@ -9,7 +9,7 @@ Bots para **Minecraft Java Edition**, em **Node.js 24 + Mineflayer**, controlado
 1. [Baixe o ZIP da main](https://github.com/soaresbest/minimini-bot/archive/refs/heads/main.zip) e extraia a pasta inteira.
 2. **Windows:** abra `install.cmd`, que executa o instalador PowerShell. **Linux/macOS:** abra o terminal na pasta e execute `bash install.sh`. No macOS também existe `install.command`.
 3. Confirme as etapas no terminal. O instalador verifica o ambiente, prepara Node.js 24, instala as dependências e oferece iniciar o programa.
-4. Informe o servidor, porta, nome do bot e tipo de autenticação. Configure a IA agora ou depois. O assistente só aparece automaticamente quando o arquivo de configuração ainda não existe.
+4. Informe o servidor, porta, nome do bot e tipo de autenticação. O assistente consulta o servidor, mostra o protocolo e salva a versão detectada. Configure a IA agora ou depois. O assistente só aparece automaticamente quando o arquivo de configuração ainda não existe.
 
 Não é necessário instalar Node.js ou Git antes. Se precisar, o instalador baixa o Node.js oficial na pasta do usuário e verifica SHA-256. No Linux mínimo, oferece instalar ferramentas/bibliotecas pelo gerenciador de pacotes. O projeto não contém dependências nativas que exijam compilador.
 
@@ -97,7 +97,7 @@ Todos os bots, em qualquer modo, comem automaticamente quando a fome chega ao li
 
 O bot evita alimentos prejudiciais/teletransporte e caminhos que exigem alterar o terreno. Isso não garante sobrevivência a todos os perigos, nem implementa coleta autônoma de recursos. Ao morrer, cancela a tarefa e aguarda o respawn do servidor. Falhas de conexão iniciam novas tentativas com intervalo crescente; remover um bot ou encerrar o programa cancela essas tentativas.
 
-Use uma versão do Minecraft suportada pela versão fixada do Mineflayer. A configuração `server.version: "auto"` tenta detectar o protocolo; se o servidor exigir, informe a versão. Servidores com plugins de chat, login, whitelist ou anticheat podem exigir ajustes próprios. Minecraft Bedrock não é atendido por este projeto.
+O bootstrap consulta o status do servidor e grava a versão em `server.version`. Configurações antigas com `"auto"` são detectadas e atualizadas antes da conexão. Se o servidor usar uma versão ainda sem dados publicados para o Mineflayer, o programa encerra com uma explicação em vez de repetir tentativas incompatíveis; execute novamente o instalador ou o F5 quando o suporte for publicado. Servidores com plugins de chat, login, whitelist ou anticheat podem exigir ajustes próprios. Minecraft Bedrock não é atendido por este projeto.
 
 ## Desenvolvimento e verificação
 
