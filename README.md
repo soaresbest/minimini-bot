@@ -97,7 +97,7 @@ Todos os bots, em qualquer modo, comem automaticamente quando a fome chega ao li
 
 O bot evita alimentos prejudiciais/teletransporte e caminhos que exigem alterar o terreno. Isso não garante sobrevivência a todos os perigos, nem implementa coleta autônoma de recursos. Ao morrer, cancela a tarefa e aguarda o respawn do servidor. Falhas de conexão iniciam novas tentativas com intervalo crescente; remover um bot ou encerrar o programa cancela essas tentativas.
 
-O bootstrap consulta o status do servidor e grava a versão em `server.version`. Configurações antigas com `"auto"` são detectadas e atualizadas antes da conexão. Se o servidor usar uma versão ainda sem dados publicados para o Mineflayer, o programa encerra com uma explicação em vez de repetir tentativas incompatíveis; execute novamente o instalador ou o F5 quando o suporte for publicado. Servidores com plugins de chat, login, whitelist ou anticheat podem exigir ajustes próprios. Minecraft Bedrock não é atendido por este projeto.
+O bootstrap consulta o status do servidor e grava a versão em `server.version`. Configurações antigas com `"auto"` são detectadas e atualizadas antes da conexão. Se o servidor usar uma versão ainda sem dados publicados para o Mineflayer, o programa mostra a versão mais recente disponível e encerra em vez de repetir tentativas incompatíveis. Se o servidor aceitar clientes antigos por um plugin de compatibilidade, essa versão pode ser informada em `npm run configure`; caso contrário, atualize a branch `main` e execute novamente o instalador quando o suporte for publicado. Servidores com plugins de chat, login, whitelist ou anticheat podem exigir ajustes próprios. Minecraft Bedrock não é atendido por este projeto.
 
 ## Desenvolvimento e verificação
 

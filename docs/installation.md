@@ -4,6 +4,8 @@ Baixe o [ZIP da branch main](https://github.com/soaresbest/minimini-bot/archive/
 
 Os instaladores informam e pedem confirmação antes de cada etapa: verificar o sistema, preparar Node.js 24, instalar dependências e iniciar o bot. Na primeira inicialização, o programa solicita as configurações no terminal. Mantenha essa janela aberta enquanto os bots estiverem conectados; `Ctrl+C` encerra o programa.
 
+As três primeiras etapas preparam o ambiente. Se o aplicativo não puder iniciar por configuração, autenticação ou incompatibilidade da versão do servidor, o instalador informa que o ambiente foi concluído e preservado; depois da correção, use apenas o iniciador do sistema.
+
 ## Windows
 
 Abra `install.cmd` com dois cliques. Ele chama o Windows PowerShell 5.1, que acompanha Windows 10/11, com uma política válida somente para esse processo. A política permanente da máquina não é alterada. Se uma política corporativa bloquear scripts, solicite a liberação ao administrador.

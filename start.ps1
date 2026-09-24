@@ -12,7 +12,7 @@ try {
     $env:PATH = (Split-Path -Parent $nodeFile) + ';' + $env:PATH
     Push-Location -LiteralPath $PSScriptRoot
     try {
-        & $nodeFile (Join-Path $PSScriptRoot 'src\index.js') @appArguments
+        & $nodeFile --disable-warning=DEP0040 (Join-Path $PSScriptRoot 'src\index.js') @appArguments
         $appExitCode = $LASTEXITCODE
     } finally { Pop-Location }
     exit $appExitCode

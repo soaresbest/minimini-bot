@@ -124,7 +124,12 @@ try {
         Write-Host "Inicie quando quiser usando: $projectDir\start.cmd"
     } elseif (Confirm-Step 'Etapa 4/4 — iniciar o Minimini Bot. Na primeira execução, o terminal solicitará o servidor, nome do bot e demais configurações.') {
         & (Join-Path $projectDir 'start.ps1')
-        if ($LASTEXITCODE -ne 0) { throw 'O bot encerrou com erro. Consulte a mensagem acima.' }
+        $appExitCode = $LASTEXITCODE
+        if ($appExitCode -ne 0) {
+            Write-Host "`nO ambiente foi instalado corretamente, mas o bot não pôde iniciar. Corrija a mensagem do aplicativo acima e execute: $projectDir\start.cmd" -ForegroundColor Yellow
+            exit $appExitCode
+        }
+        Write-Host "`nO Minimini Bot foi encerrado. O ambiente continua instalado."
     } else {
         Write-Host "Ambiente pronto. Inicie com: $projectDir\start.cmd"
     }

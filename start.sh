@@ -14,4 +14,4 @@ if [[ ! -d "$PROJECT_DIR/node_modules/mineflayer" ]]; then
 fi
 export PATH="$(dirname "$NODE_FILE"):$PATH"
 cd -- "$PROJECT_DIR"
-exec "$NODE_FILE" "$PROJECT_DIR/src/index.js" "$@"
+exec "$NODE_FILE" --disable-warning=DEP0040 "$PROJECT_DIR/src/index.js" "$@"

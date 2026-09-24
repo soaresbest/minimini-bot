@@ -8,6 +8,9 @@
       "program": "${workspaceFolder}/src/index.js",
       "cwd": "${workspaceFolder}",
       "runtimeExecutable": "${workspaceFolder}/scripts/vscode-node.sh",
+      "runtimeArgs": [
+        "--disable-warning=DEP0040"
+      ],
       "windows": {
         "runtimeExecutable": "${workspaceFolder}\\scripts\\vscode-node.cmd"
       },

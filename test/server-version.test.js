@@ -4,6 +4,7 @@ import { validateConfig } from '../src/config.js';
 import {
   assertSupportedServerVersion,
   detectServerVersion,
+  latestSupportedServerVersion,
   resolveServerVersion,
   supportsServerVersion,
 } from '../src/server-version.js';
@@ -50,7 +51,7 @@ test('versão automática é salva antes de informar falta de suporte', async ()
 test('aceita versões antigas e novas e valida dados disponíveis', async () => {
   assert.equal(validateConfig({ server: { host: 'localhost', version: '26.2' }, bots: [{ name: 'bot1' }] }).server.version, '26.2');
   assert.equal(supportsServerVersion('1.16.5'), true);
+  assert.equal(latestSupportedServerVersion(), '26.1.2');
   assert.doesNotThrow(() => assertSupportedServerVersion('1.16.5'));
   assert.equal((await resolveServerVersion(config('1.16.5'))).server.version, '1.16.5');
 });
-

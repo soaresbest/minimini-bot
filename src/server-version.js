@@ -10,6 +10,12 @@ export function supportsServerVersion(version) {
   }
 }
 
+export function latestSupportedServerVersion() {
+  return minecraftData.versions.pc.find(candidate =>
+    candidate.releaseType === 'release' && supportsServerVersion(candidate.minecraftVersion)
+  )?.minecraftVersion;
+}
+
 export async function detectServerVersion(server, { ping = minecraftProtocol.ping } = {}) {
   const response = await ping({
     host: server.host,
@@ -34,9 +40,11 @@ export async function detectServerVersion(server, { ping = minecraftProtocol.pin
 
 export function assertSupportedServerVersion(version) {
   if (supportsServerVersion(version)) return;
+  const latest = latestSupportedServerVersion();
   throw new ConfigError(
     `A versão ${version} do servidor foi identificada, mas ainda não é suportada pelas dependências instaladas. ` +
-    'Execute novamente o instalador ou o F5 após a publicação do suporte pelo Mineflayer.',
+    `${latest ? `A versão mais recente disponível para o bot é ${latest}. ` : ''}` +
+    'Se o servidor aceitar clientes antigos, execute npm run configure e informe essa versão; caso contrário, atualize a branch main e execute o instalador novamente quando o Mineflayer publicar o suporte.',
   );
 }
 

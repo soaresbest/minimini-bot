@@ -183,7 +183,13 @@ if [[ "$NO_START" == 1 ]]; then
   printf '\nEtapa 4/4 — inicialização adiada por --no-start.\nInicie quando quiser com: bash "%s/start.sh"\n' "$PROJECT_DIR"
 else
   if confirm 'Etapa 4/4 — iniciar o Minimini Bot. Na primeira execução, o terminal solicitará o servidor, nome do bot e demais configurações.'; then
-    bash "$PROJECT_DIR/start.sh"
+    if bash "$PROJECT_DIR/start.sh"; then
+      printf '\nO Minimini Bot foi encerrado. O ambiente continua instalado.\n'
+    else
+      APP_EXIT_CODE=$?
+      printf '\nO ambiente foi instalado corretamente, mas o bot não pôde iniciar. Corrija a mensagem do aplicativo acima e execute: bash "%s/start.sh"\n' "$PROJECT_DIR" >&2
+      exit "$APP_EXIT_CODE"
+    fi
   else
     printf 'Ambiente pronto. Inicie com: bash "%s/start.sh"\n' "$PROJECT_DIR"
   fi

@@ -45,6 +45,16 @@ test('instalador Bash prepara projeto com espaços no caminho sem iniciar o bot'
   assert.match(result.stdout, /inicialização adiada/);
 });
 
+test('instalador Bash separa instalação concluída de falha ao iniciar o aplicativo', { skip: !unix }, (t) => {
+  const directory = fixture(t);
+  writeFileSync(join(directory, 'start.sh'), '#!/bin/sh\necho "erro simulado do aplicativo" >&2\nexit 7\n', { mode: 0o755 });
+  const result = spawnSync('bash', ['install.sh', '--yes'], { cwd: directory, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(result.status, 7, result.stdout + result.stderr);
+  assert.match(result.stdout, /Dependências instaladas/u);
+  assert.match(result.stderr, /ambiente foi instalado corretamente/u);
+  assert.doesNotMatch(result.stderr, /A instalação falhou/u);
+});
+
 test('instalador Windows prepara projeto com espaços no caminho sem iniciar o bot', { skip: process.platform !== 'win32' }, (t) => {
   const directory = fixture(t);
   cpSync(join(root, 'install.ps1'), join(directory, 'install.ps1'));
