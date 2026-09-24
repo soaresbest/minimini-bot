@@ -139,6 +139,13 @@ for (const provider of Object.keys(PROVIDERS)) {
       { reply: 'Vou executar.', actions: [{ type: 'status' }, { type: 'execute', code: 'anything' }] }) }), { code: 'AI_INVALID_PLAN' });
   });
 
+  test(`aceita objetivo de fabricação retornado por ${provider}`, async () => {
+    const result = await planActions({ ...argsFor(provider), message: 'Faça uma picareta de pedra.',
+      fetchImpl: success(provider, { reply: 'Vou reunir os materiais e fazer uma picareta de pedra.',
+        actions: [{ type: 'craft', item: 'minecraft:stone_pickaxe', count: 1 }] }) });
+    assert.deepEqual(result.actions, [{ type: 'craft', item: 'stone_pickaxe', count: 1 }]);
+  });
+
   test(`rejeita resposta truncada de ${provider}`, async () => {
     const value = envelope(provider);
     if (provider === 'openai') value.status = 'incomplete';
@@ -163,6 +170,21 @@ test('não divulga corpos de erros HTTP nem detalhes de rede', async () => {
     assert.doesNotMatch(error.stack, /secret-test-key/);
     return true;
   });
+});
+
+test('limita fabricação aos itens permitidos e à quantidade total inteira de 1 a 16', () => {
+  const valid = (action) => ({ reply: 'Vou fabricar.', actions: [{ type: 'status' }, action] });
+  assert.deepEqual(validatePlan(valid({ type: 'craft', item: 'crafting_table', count: 16 })).actions[1],
+    { type: 'craft', item: 'crafting_table', count: 16 });
+  for (const item of ['diamond_pickaxe', 'command_block', 'stone', 'minecraft:unknown_item', 'Stone_Pickaxe']) {
+    assert.throws(() => validatePlan(valid({ type: 'craft', item, count: 1 })), { code: 'AI_INVALID_PLAN' });
+  }
+  for (const count of [0, -1, 17, 1.5, '1', null, Number.NaN, Infinity]) {
+    assert.throws(() => validatePlan(valid({ type: 'craft', item: 'stone_pickaxe', count })), { code: 'AI_INVALID_PLAN' });
+  }
+  assert.throws(() => validatePlan(valid({ type: 'craft', item: 'stone_pickaxe' })), { code: 'AI_INVALID_PLAN' });
+  assert.throws(() => validatePlan(valid({ type: 'craft', item: 'stone_pickaxe', count: 1, code: 'process.exit()' })),
+    { code: 'AI_INVALID_PLAN' });
 });
 
 test('cancela antes e durante a chamada sem vazar motivo do AbortSignal', async () => {

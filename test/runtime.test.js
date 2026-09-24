@@ -387,6 +387,34 @@ test('gera senha aleatória com exatamente 8 dígitos', () => {
   for (let index = 0; index < 100; index++) assert.match(generateRegistrationPassword(), /^\d{8}$/u);
 });
 
+test('cancelar durante look da colocação impede o pacote de bloco tardio', async t => {
+  const h = harness(); t.after(h.close);
+  h.bot.inventory.items = () => [{ name: 'crafting_table', type: 1 }];
+  h.bot.blockAt = position => ({ name: position.y === 64 ? 'air' : 'stone', boundingBox: position.y === 64 ? 'empty' : 'block', position });
+  let finish;
+  let placed = false;
+  h.bot.lookAt = () => new Promise(resolve => { finish = resolve; });
+  h.bot._placeBlockWithOptions = async () => { placed = true; };
+  const work = h.controller.startWork('bancada');
+  const pending = h.controller.executePlan([{ type: 'place', x: 1, y: 63, z: 1, face: 'up', item: 'crafting_table' }], work);
+  await delay(0);
+  h.controller.stop();
+  await pending;
+  assert.equal(h.controller.handBusy, true);
+  finish(); await delay(0);
+  assert.equal(placed, false);
+  assert.equal(h.controller.handBusy, false);
+});
+
+test('objetivo craft já satisfeito passa pelo executor sem ações no mundo', async t => {
+  const h = harness(); t.after(h.close);
+  h.bot.inventory.items = () => [{ name: 'stone_pickaxe', count: 1 }];
+  const work = h.controller.startWork('fabricando');
+  await h.controller.executePlan([{ type: 'craft', item: 'stone_pickaxe', count: 1 }], work);
+  assert.equal(h.controller.task, 'parado');
+  assert.equal(h.said.at(-1), 'Tarefa concluída.');
+});
+
 test('registro é salvo por servidor e bot antes de agendar os comandos', async () => {
   const config = validateConfig({
     server: { host: 'Example.COM', port: 25570 },

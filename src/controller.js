@@ -3,6 +3,7 @@ import vec3Package from 'vec3';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChatQueue } from './chat.js';
 import { HELP } from './commands.js';
+import { CraftingTask } from './crafting.js';
 
 const { Movements, goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -125,6 +126,24 @@ export class BotController {
     this.pathFailure = false;
     if (!this.eating) this.bot.pathfinder.setGoal(goal, dynamic);
   }
+  async moveToGoal(goal, signal) {
+    signal.throwIfAborted();
+    this.setGoal(goal);
+    const ownGoal = this.goal;
+    try {
+      while (!goal.isEnd(this.bot.entity.position.floored())) {
+        signal.throwIfAborted();
+        if (this.pathFailure) throw new Error('não há caminho seguro até o destino');
+        await delay(200, undefined, { signal });
+      }
+      signal.throwIfAborted();
+    } finally {
+      if (this.goal === ownGoal) {
+        this.goal = null;
+        this.bot.pathfinder.setGoal(null);
+      }
+    }
+  }
   vector(x, y, z) { const v = this.bot.entity.position.clone(); v.x = x; v.y = y; v.z = z; return v; }
   async waitForHand(signal) {
     while (this.handBusy || this.eating) await delay(100, undefined, { signal });
@@ -165,6 +184,10 @@ export class BotController {
     signal.throwIfAborted();
     if (action.type === 'status') { this.say(this.status()); return; }
     if (action.type === 'help') { HELP.forEach(line => this.say(line)); return; }
+    if (action.type === 'craft') {
+      await new CraftingTask(this, signal).run(action.item, action.count);
+      return;
+    }
     if (action.type === 'stop') {
       this.following = null;
       this.goal = null;
@@ -227,9 +250,11 @@ export class BotController {
       await this.useHand(async () => {
         await this.bot.equip(this.inventoryItem(action.item), 'hand');
         bounded.throwIfAborted();
-        // The pinned Mineflayer implementation exposes this variant to force
-        // immediate look, avoiding delayed placement after a cancelled turn.
-        await this.bot._placeBlockWithOptions(block, face, { forceLook: true, swingArm: 'right' });
+        await this.bot.lookAt(block.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
+        bounded.throwIfAborted();
+        // Look explicitly before checking cancellation: even forceLook:true
+        // yields inside Mineflayer before sending its placement packet.
+        await this.bot._placeBlockWithOptions(block, face, { forceLook: 'ignore', swingArm: 'right' });
       }, bounded);
       return;
     }

@@ -82,12 +82,17 @@ Quem usa o runtime instalado pode executar `bash start.sh --configure` ou `start
 @bot1 venha até mim e me proteja
 @bot1 vá para 100, 64, 300 e depois informe seu inventário
 @bot1 equipe a espada de ferro
+@bot1 faça uma picareta de pedra
 @bot1 mode(default)
 ```
 
-Comandos diretos continuam disponíveis no modo IA, especialmente `stop`. Pedidos em linguagem natural enviam à API a mensagem, as 20 interações anteriores com o bot, o catálogo de ações e um resumo limitado do estado do bot: posição, dimensão, tarefa, vida, fome, saturação, oxigênio, item equipado, inventário, jogadores conectados, entidades próximas e até 120 blocos da superfície visível nos chunks carregados, amostrados em um raio máximo de 12 chunks. O histórico fica somente na memória e é separado para cada bot. O modelo devolve uma resposta e até 8 ações. O plano inteiro é validado antes de executar: movimento, seguir, proteger, parar, consultar estado, equipar, olhar, minerar, colocar blocos e esperar. O programa não executa código JavaScript produzido pela IA.
+Comandos diretos continuam disponíveis no modo IA, especialmente `stop`. Pedidos em linguagem natural enviam à API a mensagem, as 20 interações anteriores com o bot, o catálogo de ações e um resumo limitado do estado do bot: posição, dimensão, tarefa, vida, fome, saturação, oxigênio, item equipado, inventário, jogadores conectados, entidades próximas e até 120 blocos da superfície visível nos chunks carregados, amostrados em um raio máximo de 12 chunks. O histórico fica somente na memória e é separado para cada bot. O modelo devolve uma resposta e até 8 ações. O plano inteiro é validado antes de executar: movimento, seguir, proteger, parar, consultar estado, equipar, olhar, minerar, colocar blocos, fabricar itens permitidos e esperar. O programa não executa código JavaScript produzido pela IA.
 
-As APIs exigem chaves próprias e podem cobrar por uso. Modelos e disponibilidade dependem da conta. Cada consulta tem limite de 30 segundos e pode ser cancelada por outro comando. Os resultados das ações são informados no chat; não há replanejamento autônomo nem memória persistente de conversa.
+Para `faça uma picareta de pedra`, a IA pede o objetivo `craft(stone_pickaxe, 1)` em seu plano. O executor resolve as dependências pelas receitas do servidor: coleta madeira, faz tábuas e gravetos, prepara a bancada, fabrica uma picareta de madeira, minera pedra e fabrica a picareta de pedra. Aproveita materiais, ferramentas e bancada que já existam, pulando etapas desnecessárias. Essa notação descreve a ação interna; o pedido pelo chat é em linguagem natural no modo IA.
+
+A fabricação aceita bancada, gravetos, tábuas, fornalha e ferramentas de madeira ou pedra. A quantidade de 1 a 16 é o **total desejado no inventário**, podendo sobrar itens quando a receita produz um lote. A coleta usa troncos e pedra expostos nos chunks carregados a até 32 blocos; o bot informa a falha se não encontrar recursos ou caminho. Cada objetivo tem limites de 128 operações, 10 níveis de dependência e 10 minutos. `stop` interrompe a tarefa, e o chat informa seu progresso. Veja os identificadores e os detalhes em [ações de IA](docs/ai.md).
+
+As APIs exigem chaves próprias e podem cobrar por uso. Modelos e disponibilidade dependem da conta. Cada consulta tem limite de 30 segundos e pode ser cancelada por outro comando. Os resultados das ações são informados no chat. A fabricação resolve dependências localmente durante a execução, sem novas chamadas à IA; o restante do plano não é replanejado automaticamente. Não há memória persistente de conversa.
 
 Consulte [configuração detalhada](docs/configuration.md) e [integrações de IA, ações e fontes oficiais](docs/ai.md).
 
@@ -95,7 +100,7 @@ Consulte [configuração detalhada](docs/configuration.md) e [integrações de I
 
 Todos os bots, em qualquer modo, comem automaticamente quando a fome chega ao limite configurado, se houver alimento seguro no inventário. A alimentação pausa o movimento e retoma a tarefa; se receber `stop` durante a refeição, permanece parado depois. Sem comida segura, o bot alerta somente quando a fome ou a vida chega a `8/20` ou menos, repetindo no máximo uma vez por minuto enquanto o risco continuar. Entregue alimentos e armas pelo inventário normal do Minecraft.
 
-O bot evita alimentos prejudiciais/teletransporte e caminhos que exigem alterar o terreno. Isso não garante sobrevivência a todos os perigos, nem implementa coleta autônoma de recursos. Ao morrer, cancela a tarefa e aguarda o respawn do servidor. Falhas de conexão iniciam novas tentativas com intervalo crescente; remover um bot ou encerrar o programa cancela essas tentativas.
+O bot evita alimentos prejudiciais/teletransporte e caminhos que exigem alterar o terreno. Isso não garante sobrevivência a todos os perigos. A coleta de recursos ocorre somente para atender a um objetivo de fabricação solicitado, dentro dos limites descritos acima; o bot não explora novos chunks para buscar materiais. Ao morrer, cancela a tarefa e aguarda o respawn do servidor. Falhas de conexão iniciam novas tentativas com intervalo crescente; remover um bot ou encerrar o programa cancela essas tentativas.
 
 O bootstrap consulta o status do servidor e grava a versão em `server.version`. Configurações antigas com `"auto"` são detectadas e atualizadas antes da conexão. Se o servidor usar uma versão ainda sem dados publicados para o Mineflayer, o programa mostra a versão mais recente disponível e encerra em vez de repetir tentativas incompatíveis. Se o servidor aceitar clientes antigos por um plugin de compatibilidade, essa versão pode ser informada em `npm run configure`; caso contrário, atualize a branch `main` e execute novamente o instalador quando o suporte for publicado. Servidores com plugins de chat, login, whitelist ou anticheat podem exigir ajustes próprios. Minecraft Bedrock não é atendido por este projeto.
 
@@ -121,6 +126,6 @@ npm audit
 
 Os testes cobrem comandos, configuração, persistência, exclusão de bots, concorrência, cancelamento, sobrevivência, quatro provedores com HTTP simulado e instaladores. Há um teste de conexão real do Mineflayer com um servidor de protocolo local; ele verifica login/chat e não substitui uma sessão em um mundo Minecraft completo. As chamadas de IA nos testes não usam créditos. O GitHub Actions executa a suíte em Windows, Ubuntu e macOS.
 
-Arquitetura: `src/config.js` prepara e persiste configurações; `src/manager.js` gerencia conexões e chat; `src/controller.js` executa ações e sobrevivência; `src/ai/planner.js` integra as APIs. Scripts de instalação e inicialização ficam na raiz. Dados pessoais e sessões ficam fora do Git.
+Arquitetura: `src/config.js` prepara e persiste configurações; `src/manager.js` gerencia conexões e chat; `src/controller.js` executa ações e sobrevivência; `src/crafting.js` resolve objetivos de fabricação; `src/ai/planner.js` integra as APIs. Scripts de instalação e inicialização ficam na raiz. Dados pessoais e sessões ficam fora do Git.
 
 As alterações do projeto são mantidas na branch **`main`**, com commits e push após as verificações de cada mudança concluída. A atualização de uma instalação existente é descrita no [guia de instalação](docs/installation.md).

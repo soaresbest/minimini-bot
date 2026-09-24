@@ -46,6 +46,7 @@ A API devolve uma resposta curta e até oito ações ordenadas. O programa valid
 | `status` | Nenhum | Informa vida, fome, tarefa e itens. |
 | `help` | Nenhum | Informa comandos. |
 | `equip` | `item` | Equipa item do inventário na mão. |
+| `craft` | `item` da lista permitida, `count` inteiro de 1 a 16 | Garante a quantidade total no inventário, coletando materiais e fabricando dependências necessárias. |
 | `look` | `x`, `y`, `z` | Olha para a posição. |
 | `dig` | `x`, `y`, `z` inteiros | Quebra bloco carregado ao alcance. |
 | `place` | `x`, `y`, `z` inteiros, `face`, `item` | Coloca item na face de um bloco de referência. |
@@ -65,9 +66,47 @@ Exemplo de plano aceito:
 }
 ```
 
+## Objetivos de fabricação
+
+No modo IA, o pedido `@bot1 faça uma picareta de pedra` pode gerar este plano:
+
+```json
+{
+  "reply": "Vou reunir os materiais e fabricar uma picareta de pedra.",
+  "actions": [
+    { "type": "craft", "item": "stone_pickaxe", "count": 1 }
+  ]
+}
+```
+
+A IA define o objetivo final. O executor consulta as receitas da versão do servidor com `recipesAll`, resolve as dependências recursivamente e usa `craft` para fabricar. Com inventário vazio e recursos acessíveis, a sequência é:
+
+1. Procurar e coletar madeira, convertendo-a em tábuas e gravetos conforme necessário.
+2. Fabricar e colocar uma bancada.
+3. Fabricar uma picareta de madeira.
+4. Usar a picareta para minerar pedra e recolher pedregulho (`cobblestone`).
+5. Fabricar a picareta de pedra.
+
+O inventário é consultado durante a execução. Materiais, ferramentas e uma bancada próxima são reaproveitados, então etapas já atendidas são puladas. `count` significa o **total desejado no inventário**, não unidades adicionais: se já houver uma picareta de pedra, `count: 1` não fabrica outra. Receitas que produzem vários itens por vez podem ultrapassar esse total, como um lote de quatro gravetos. O bot relata o progresso no chat, e `stop` cancela tanto a coleta quanto a fabricação.
+
+`item` aceita somente os identificadores abaixo, também com o prefixo opcional `minecraft:`. O item e sua receita precisam existir na versão conectada:
+
+| Grupo | Identificadores |
+| --- | --- |
+| Utilitários | `crafting_table`, `stick`, `furnace` |
+| Ferramentas de madeira | `wooden_pickaxe`, `wooden_axe`, `wooden_shovel`, `wooden_hoe`, `wooden_sword` |
+| Ferramentas de pedra | `stone_pickaxe`, `stone_axe`, `stone_shovel`, `stone_hoe`, `stone_sword` |
+| Tábuas | `oak_planks`, `spruce_planks`, `birch_planks`, `jungle_planks`, `acacia_planks`, `dark_oak_planks`, `mangrove_planks`, `cherry_planks`, `pale_oak_planks`, `crimson_planks`, `warped_planks` |
+
+O objetivo autoriza a coleta e a colocação da bancada necessárias para fabricar o item. A busca procura troncos e pedra expostos em chunks carregados a até **32 blocos**; não explora novos chunks nem escava túneis para localizar recursos. A amostra `nearbyBlocks` enviada à IA não precisa mostrar todos os materiais: o executor faz a busca local quando chegar a essa etapa. Se faltar um recurso, uma receita ou um caminho, a tarefa para com uma explicação.
+
+Mantenha pelo menos um espaço livre no inventário. A tarefa não descarta itens para abrir espaço e só confirma coleta ou fabricação quando o resultado aparece no inventário. `stop` impede as próximas etapas; uma receita já enviada ao servidor pode terminar, mantendo a mão ocupada até a operação encerrar.
+
+Cada objetivo fica limitado a **128 operações, 10 níveis de dependência e 10 minutos**. Cada operação também respeita `settings.actionTimeoutMs` (120 segundos por padrão). Esses limites são independentes dos 30 segundos da consulta à IA e das oito ações do plano: as etapas internas de `craft` não exigem novas ações da IA.
+
 ## Limites e falhas
 
-Cada pedido tem prazo de 30 segundos, limite de 2.000 caracteres de entrada, resposta HTTP de até 128 KiB e até 2.048 tokens de saída. Não há repetição automática de chamadas cobradas. `stop`, troca de tarefa ou desconexão podem cancelar a consulta pela sinalização do gerenciador. Respostas recusadas, truncadas ou inválidas nunca viram ações parciais. O plano não recebe resultados de ações para planejar novamente automaticamente; uma nova mensagem pode solicitar a próxima tarefa.
+Cada pedido tem prazo de 30 segundos, limite de 2.000 caracteres de entrada, resposta HTTP de até 128 KiB e até 2.048 tokens de saída. Não há repetição automática de chamadas cobradas. `stop`, troca de tarefa ou desconexão podem cancelar a consulta pela sinalização do gerenciador. Respostas recusadas, truncadas ou inválidas nunca viram ações parciais. Em `craft`, as dependências são resolvidas localmente conforme o inventário e o mundo, sem outra consulta à IA. Os resultados das ações não são enviados à IA para replanejar o restante do plano automaticamente; uma nova mensagem pode solicitar a próxima tarefa.
 
 Erros mostram instruções curtas em português. Corpos HTTP, cabeçalhos e mensagens brutas de rede não são exibidos, porque podem conter credenciais. Os testes usam respostas HTTP simuladas dos quatro provedores e não consomem créditos de API.
 
