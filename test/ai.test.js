@@ -193,14 +193,28 @@ test('rejeita JSON malformado, Markdown e resposta muito grande', async () => {
   await assert.rejects(planActions({ ...argsFor('openai'), fetchImpl: async () => Response.json(value) }), { code: 'AI_INVALID_PLAN' });
 });
 
-test('limita mensagem e contexto enviados e retira chaves da resposta', async (t) => {
+test('limita e filtra o estado do mundo enviado à IA e retira chaves da resposta', async (t) => {
   const fetchImpl = t.mock.fn();
   await assert.rejects(planActions({ ...argsFor('openai'), message: 'a'.repeat(2001), fetchImpl }), { code: 'AI_INPUT' });
   assert.equal(fetchImpl.mock.callCount(), 0);
-  const result = await planActions({ ...argsFor('openai'), context: { inventory: Array.from({ length: 300 }, () => ({ name: 'bread', count: 1 })) },
+  const result = await planActions({ ...argsFor('openai'), context: {
+    health: 18, food: 12, foodSaturation: 4, oxygen: 15,
+    heldItem: { name: 'iron_pickaxe', count: 1, secret: 'never-send' },
+    inventory: Array.from({ length: 300 }, () => ({ name: 'bread', count: 1 })),
+    players: [{ name: 'Alex', position: { x: 2, y: 64, z: 3 }, distance: 3.6, loaded: true, address: 'never-send' }],
+    nearbyBlocks: Array.from({ length: 100 }, (_, index) => ({ name: 'stone', position: { x: index, y: 64, z: 0 }, distance: index, metadata: 'never-send' })),
+  },
     fetchImpl: async (_url, options) => {
       const input = JSON.parse(JSON.parse(options.body).input[0].content);
       assert.equal(input.context.inventory.length, 50);
+      assert.equal(input.context.nearbyBlocks.length, 40);
+      assert.deepEqual(input.context.heldItem, { name: 'iron_pickaxe', count: 1 });
+      assert.deepEqual(input.context.players[0], { name: 'Alex', position: { x: 2, y: 64, z: 3 }, distance: 3.6, loaded: true });
+      assert.equal(input.context.health, 18);
+      assert.equal(input.context.food, 12);
+      assert.equal(input.context.foodSaturation, 4);
+      assert.equal(input.context.oxygen, 15);
+      assert.doesNotMatch(options.body, /never-send/);
       return Response.json(envelope('openai', { reply: 'secret-test-key', actions: [] }));
     } });
   assert.equal(result.reply, '[chave removida]');

@@ -85,7 +85,7 @@ Quem usa o runtime instalado pode executar `bash start.sh --configure` ou `start
 @bot1 mode(default)
 ```
 
-Comandos diretos continuam disponíveis no modo IA, especialmente `stop`. Pedidos em linguagem natural enviam à API a mensagem, o catálogo de ações e um resumo do estado do bot. O modelo devolve uma resposta e até 8 ações. O plano inteiro é validado antes de executar: movimento, seguir, proteger, parar, consultar estado, equipar, olhar, minerar, colocar blocos e esperar. O programa não executa código JavaScript produzido pela IA.
+Comandos diretos continuam disponíveis no modo IA, especialmente `stop`. Pedidos em linguagem natural enviam à API a mensagem, o catálogo de ações e um resumo limitado do estado do bot: posição, dimensão, tarefa, vida, fome, saturação, oxigênio, item equipado, inventário, jogadores conectados, entidades próximas e blocos carregados que estejam em linha de visão. O modelo devolve uma resposta e até 8 ações. O plano inteiro é validado antes de executar: movimento, seguir, proteger, parar, consultar estado, equipar, olhar, minerar, colocar blocos e esperar. O programa não executa código JavaScript produzido pela IA.
 
 As APIs exigem chaves próprias e podem cobrar por uso. Modelos e disponibilidade dependem da conta. Cada consulta tem limite de 30 segundos e pode ser cancelada por outro comando. Os resultados das ações são informados no chat; não há replanejamento autônomo nem memória persistente de conversa.
 

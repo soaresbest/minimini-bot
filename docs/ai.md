@@ -31,7 +31,7 @@ A variável de ambiente tem prioridade sobre o campo opcional `apiKey` dentro da
 
 ## Como um pedido vira uma ação
 
-Uma mensagem dirigida ao bot gera uma única consulta à API. Ela envia a mensagem do jogador, um catálogo das ações implementadas e um resumo limitado do mundo: posição, vida, fome, tarefa, inventário, jogadores e entidades/blocos próximos quando disponíveis. A configuração inteira, endereço do servidor, sessões e chaves não são enviados como contexto. Chaves conhecidas são removidas dos textos. Esse resumo e a mensagem são processados pelo provedor escolhido; não existe histórico persistente de conversa na integração.
+Uma mensagem dirigida ao bot gera uma única consulta à API. Ela envia a mensagem do jogador, um catálogo das ações implementadas e um resumo limitado do mundo: posição, dimensão, tarefa, vida, fome, saturação, oxigênio, item equipado, até 50 itens do inventário, jogadores conectados e entidades próximas. Também são enviados até 40 blocos próximos encontrados nos chunks carregados e em linha de visão, com nome, posição e distância. Essa lista é uma amostra do entorno, não um mapa completo. A configuração inteira, endereço do servidor, sessões e chaves não são enviados como contexto. Chaves conhecidas são removidas dos textos. Esse resumo e a mensagem são processados pelo provedor escolhido; não existe histórico persistente de conversa na integração.
 
 A API devolve uma resposta curta e até oito ações ordenadas. O programa valida **todo** o plano antes de executar qualquer ação. Campos desconhecidos, coordenadas inválidas, nomes malformados, respostas incompletas e operações fora da lista são rejeitados. Não há `eval`, execução de shell, JavaScript gerado ou acesso irrestrito às APIs do Mineflayer.
 

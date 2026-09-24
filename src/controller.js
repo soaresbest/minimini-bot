@@ -6,6 +6,10 @@ import { HELP } from './commands.js';
 const { Movements, goals } = pathfinderPackage;
 const HOSTILE = new Set(['zombie', 'husk', 'drowned', 'skeleton', 'stray', 'bogged', 'wither_skeleton', 'creeper', 'spider', 'cave_spider', 'silverfish', 'endermite', 'witch', 'pillager', 'vindicator', 'evoker', 'ravager', 'phantom', 'blaze', 'breeze', 'slime', 'magma_cube', 'zoglin', 'hoglin', 'guardian', 'elder_guardian']);
 const UNSAFE_FOOD = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chorus_fruit', 'suspicious_stew', 'chicken']);
+const AIR_BLOCKS = new Set(['air', 'cave_air', 'void_air']);
+const BLOCK_SCAN_DISTANCE = 16;
+const BLOCK_SCAN_CANDIDATES = 192;
+const VISIBLE_BLOCK_LIMIT = 40;
 const FACES = { up: [0, 1, 0], down: [0, -1, 0], north: [0, 0, -1], south: [0, 0, 1], east: [1, 0, 0], west: [-1, 0, 0] };
 
 export class BotController {
@@ -325,11 +329,45 @@ export class BotController {
     const position = this.bot.entity.position;
     return {
       position: { x: position.x, y: position.y, z: position.z }, health: this.bot.health, food: this.bot.food,
+      foodSaturation: this.bot.foodSaturation, oxygen: this.bot.oxygenLevel,
       task: this.task, dimension: this.bot.game.dimension,
+      heldItem: this.bot.heldItem ? { name: this.bot.heldItem.name, count: this.bot.heldItem.count } : null,
       inventory: this.bot.inventory.items().map(({ name, count }) => ({ name, count })),
-      players: Object.entries(this.bot.players).filter(([name]) => !this.manager.isBot(name)).map(([name, p]) => ({ name, position: p.entity?.position })),
+      players: Object.entries(this.bot.players).filter(([name]) => !this.manager.isBot(name)).map(([name, p]) => ({
+        name,
+        position: p.entity?.position,
+        distance: p.entity?.position?.distanceTo(position),
+        loaded: Boolean(p.entity),
+      })),
+      nearbyBlocks: this.visibleBlocks(position),
       nearbyEntities: Object.values(this.bot.entities).filter(e => e.position.distanceTo(position) < 24).slice(0, 30).map(e => ({ name: e.name ?? e.username, type: e.type, position: e.position }))
     };
+  }
+  visibleBlocks(position = this.bot.entity.position) {
+    if (typeof this.bot.findBlocks !== 'function' || typeof this.bot.blockAt !== 'function' || typeof this.bot.canSeeBlock !== 'function') return [];
+    try {
+      const candidates = this.bot.findBlocks({
+        point: position,
+        maxDistance: BLOCK_SCAN_DISTANCE,
+        count: BLOCK_SCAN_CANDIDATES,
+        matching: block => block && !AIR_BLOCKS.has(block.name),
+      });
+      const visible = [];
+      for (const blockPosition of candidates) {
+        const block = this.bot.blockAt(blockPosition, false);
+        if (!block || AIR_BLOCKS.has(block.name) || !this.bot.canSeeBlock(block)) continue;
+        visible.push({
+          name: block.name,
+          position: { x: block.position.x, y: block.position.y, z: block.position.z },
+          distance: block.position.distanceTo(position),
+        });
+        if (visible.length >= VISIBLE_BLOCK_LIMIT) break;
+      }
+      return visible;
+    } catch {
+      // Chunks can unload while the snapshot is being collected.
+      return [];
+    }
   }
   close() {
     if (this.closed) return;

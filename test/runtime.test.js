@@ -62,6 +62,44 @@ test('comando desconhecido tem resposta curta; follow rejeita jogador offline e 
   assert.match(h.said.pop(), /não um bot/);
 });
 
+test('contexto de IA inclui estado, inventário, jogadores e blocos carregados visíveis', t => {
+  const h = harness(); t.after(h.close);
+  const stonePosition = new Point(1, 64, 0);
+  const hiddenPosition = new Point(2, 64, 0);
+  const airPosition = new Point(0, 65, 0);
+  const blocks = new Map([
+    [stonePosition, { name: 'stone', position: stonePosition }],
+    [hiddenPosition, { name: 'dirt', position: hiddenPosition }],
+    [airPosition, { name: 'air', position: airPosition }],
+  ]);
+  h.bot.health = 17;
+  h.bot.food = 14;
+  h.bot.foodSaturation = 3.5;
+  h.bot.oxygenLevel = 12;
+  h.bot.heldItem = { name: 'iron_pickaxe', count: 1 };
+  h.bot.inventory.items = () => [{ name: 'iron_pickaxe', count: 1 }, { name: 'bread', count: 4 }];
+  h.bot.players.Bob = { username: 'Bob' };
+  h.bot.findBlocks = options => {
+    assert.equal(options.maxDistance, 16);
+    assert.equal(options.count, 192);
+    return [stonePosition, hiddenPosition, airPosition];
+  };
+  h.bot.blockAt = point => blocks.get(point);
+  h.bot.canSeeBlock = block => block.name !== 'dirt';
+
+  const context = h.controller.context();
+  assert.equal(context.health, 17);
+  assert.equal(context.food, 14);
+  assert.equal(context.foodSaturation, 3.5);
+  assert.equal(context.oxygen, 12);
+  assert.deepEqual(context.heldItem, { name: 'iron_pickaxe', count: 1 });
+  assert.deepEqual(context.inventory, [{ name: 'iron_pickaxe', count: 1 }, { name: 'bread', count: 4 }]);
+  assert.deepEqual(context.nearbyBlocks, [{ name: 'stone', position: { x: 1, y: 64, z: 0 }, distance: 1 }]);
+  assert.equal(context.players.find(player => player.name === 'Alice').loaded, true);
+  assert.equal(context.players.find(player => player.name === 'Bob').loaded, false);
+  assert.equal(context.players.some(player => player.name === 'Bot1'), false);
+});
+
 test('status preserva tarefa, enquanto stop cancela IA pendente e ignora resultado tardio', async t => {
   let resolvePlan;
   let signal;
