@@ -28,6 +28,10 @@ export class BotManager {
   registerIdentity(name) { if (name) this.identities.add(key(name)); }
   isBot(name) { return this.identities.has(key(name)) || this.config.access.ignoredPlayers.some(n => key(n) === key(name)); }
   isAllowed(name) { return !this.isBot(name) && (!this.config.access.allowedPlayers.length || this.config.access.allowedPlayers.some(n => key(n) === key(name))); }
+  respond(controller, player, message, reply, priority = false) {
+    controller.rememberConversation(player, message, reply);
+    controller.say(reply, priority);
+  }
   start() { for (const spec of this.config.bots) this.addConnection(spec); }
   addConnection(spec) {
     const record = { spec, bot: null, controller: null, reconnectTimer: null, watchdog: null, attempts: 0, removed: false };
@@ -93,15 +97,19 @@ export class BotManager {
     if (!['stop', 'status', 'help'].includes(command?.type)) {
       const now = Date.now();
       const last = controller.commandTimes.get(key(username)) ?? 0;
-      if (now - last < this.config.settings.commandCooldownMs) { controller.say('Aguarde um instante entre comandos.', true); return; }
+      if (now - last < this.config.settings.commandCooldownMs) { this.respond(controller, username, text, 'Aguarde um instante entre comandos.', true); return; }
       for (const [name, time] of controller.commandTimes) if (now - time > 60000) controller.commandTimes.delete(name);
       controller.commandTimes.set(key(username), now);
     }
-    if (command?.type === 'stop') { controller.stop(); controller.say('Entendido. Parei aqui.', true); return; }
-    if (command?.type === 'status') { controller.say(controller.status(), true); return; }
-    if (command?.type === 'help') { HELP.forEach(line => controller.say(line)); return; }
+    if (command?.type === 'stop') { controller.stop(); this.respond(controller, username, text, 'Entendido. Parei aqui.', true); return; }
+    if (command?.type === 'status') { this.respond(controller, username, text, controller.status(), true); return; }
+    if (command?.type === 'help') {
+      controller.rememberConversation(username, text, HELP.join(' '));
+      HELP.forEach(line => controller.say(line));
+      return;
+    }
     if (MANAGEMENT.has(command?.type)) {
-      controller.say('Entendido. Vou aplicar a configuração.', true);
+      this.respond(controller, username, text, 'Entendido. Vou aplicar a configuração.', true);
       try { await this.mutate(() => this.manage(controller, command)); }
       catch (error) { controller.say(error.message, true); }
       return;
@@ -110,17 +118,17 @@ export class BotManager {
       try {
         if (command.player) controller.ensurePlayer(command.player);
         const work = controller.startWork(command.type);
-        controller.say('Entendido. Vou executar.', true);
+        this.respond(controller, username, text, 'Entendido. Vou executar.', true);
         void controller.executePlan([command], work);
-      } catch (error) { controller.say(error.message, true); }
+      } catch (error) { this.respond(controller, username, text, error.message, true); }
       return;
     }
     if (controller.spec.mode === 'default' || !text || /^(mode|botadd|botremove|botconfig)\s*\(/i.test(text)) {
-      controller.say('Não entendi. Use help.', true);
+      this.respond(controller, username, text, 'Não entendi. Use help.', true);
       return;
     }
     try { resolveProviderConfig(this.config, controller.spec); }
-    catch (error) { controller.say(error.message, true); return; }
+    catch (error) { this.respond(controller, username, text, error.message, true); return; }
     const work = controller.startWork('interpretando pedido com IA');
     controller.say('Recebi seu pedido. Estou interpretando com IA.', true);
     try {
@@ -128,10 +136,13 @@ export class BotManager {
       if (work.signal.aborted || controller.closed) return;
       const plan = validatePlan(result);
       for (const action of plan.actions) if (action.player) controller.ensurePlayer(action.player);
-      controller.say(plan.reply);
+      this.respond(controller, username, text, plan.reply);
       await controller.executePlan(plan.actions, work);
     } catch (error) {
-      if (!work.signal.aborted) { controller.stop(); controller.say(`Não consegui interpretar: ${error.message}`, true); }
+      if (!work.signal.aborted) {
+        controller.stop();
+        this.respond(controller, username, text, `Não consegui interpretar: ${error.message}`, true);
+      }
     }
   }
   mutate(fn) {

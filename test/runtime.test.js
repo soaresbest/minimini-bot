@@ -65,13 +65,7 @@ test('comando desconhecido tem resposta curta; follow rejeita jogador offline e 
 test('contexto de IA inclui estado, inventário, jogadores e blocos carregados visíveis', t => {
   const h = harness(); t.after(h.close);
   const stonePosition = new Point(1, 64, 0);
-  const hiddenPosition = new Point(2, 64, 0);
-  const airPosition = new Point(0, 65, 0);
-  const blocks = new Map([
-    [stonePosition, { name: 'stone', position: stonePosition }],
-    [hiddenPosition, { name: 'dirt', position: hiddenPosition }],
-    [airPosition, { name: 'air', position: airPosition }],
-  ]);
+  const stone = { name: 'stone', position: stonePosition };
   h.bot.health = 17;
   h.bot.food = 14;
   h.bot.foodSaturation = 3.5;
@@ -79,13 +73,15 @@ test('contexto de IA inclui estado, inventário, jogadores e blocos carregados v
   h.bot.heldItem = { name: 'iron_pickaxe', count: 1 };
   h.bot.inventory.items = () => [{ name: 'iron_pickaxe', count: 1 }, { name: 'bread', count: 4 }];
   h.bot.players.Bob = { username: 'Bob' };
-  h.bot.findBlocks = options => {
-    assert.equal(options.maxDistance, 16);
-    assert.equal(options.count, 192);
-    return [stonePosition, hiddenPosition, airPosition];
+  let rays = 0;
+  h.bot.world = {
+    raycast: (_eye, _direction, distance) => {
+      assert.equal(distance, 192);
+      rays++;
+      return rays <= 2 ? stone : null;
+    },
   };
-  h.bot.blockAt = point => blocks.get(point);
-  h.bot.canSeeBlock = block => block.name !== 'dirt';
+  for (let index = 0; index < 22; index++) h.controller.rememberConversation('Alice', `pedido ${index}`, `resposta ${index}`);
 
   const context = h.controller.context();
   assert.equal(context.health, 17);
@@ -95,9 +91,24 @@ test('contexto de IA inclui estado, inventário, jogadores e blocos carregados v
   assert.deepEqual(context.heldItem, { name: 'iron_pickaxe', count: 1 });
   assert.deepEqual(context.inventory, [{ name: 'iron_pickaxe', count: 1 }, { name: 'bread', count: 4 }]);
   assert.deepEqual(context.nearbyBlocks, [{ name: 'stone', position: { x: 1, y: 64, z: 0 }, distance: 1 }]);
+  assert.equal(rays, 144);
+  assert.equal(context.conversationHistory.length, 20);
+  assert.equal(context.conversationHistory[0].message, 'pedido 2');
+  assert.equal(context.conversationHistory.at(-1).reply, 'resposta 21');
   assert.equal(context.players.find(player => player.name === 'Alice').loaded, true);
   assert.equal(context.players.find(player => player.name === 'Bob').loaded, false);
   assert.equal(context.players.some(player => player.name === 'Bot1'), false);
+});
+
+test('histórico anterior do bot é enviado ao próximo pedido de IA', async t => {
+  let receivedContext;
+  const h = harness({ bots: [{ name: 'Bot1', mode: 'ia' }], llm: { providers: { openai: { apiKey: 'test-key' } } } }, {
+    planner: async args => { receivedContext = args.context; return { reply: 'Resposta atual.', actions: [] }; }
+  }); t.after(h.close);
+  h.controller.rememberConversation('Alice', 'mensagem anterior', 'resposta anterior');
+  await h.manager.handleChat(h.controller, 'Alice', '@Bot1 mensagem atual');
+  assert.deepEqual(receivedContext.conversationHistory, [{ player: 'Alice', message: 'mensagem anterior', reply: 'resposta anterior' }]);
+  assert.deepEqual(h.controller.conversationHistory.at(-1), { player: 'Alice', message: 'mensagem atual', reply: 'Resposta atual.' });
 });
 
 test('status preserva tarefa, enquanto stop cancela IA pendente e ignora resultado tardio', async t => {

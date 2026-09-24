@@ -1,15 +1,20 @@
 import pathfinderPackage from 'mineflayer-pathfinder';
+import vec3Package from 'vec3';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChatQueue } from './chat.js';
 import { HELP } from './commands.js';
 
 const { Movements, goals } = pathfinderPackage;
+const { Vec3 } = vec3Package;
 const HOSTILE = new Set(['zombie', 'husk', 'drowned', 'skeleton', 'stray', 'bogged', 'wither_skeleton', 'creeper', 'spider', 'cave_spider', 'silverfish', 'endermite', 'witch', 'pillager', 'vindicator', 'evoker', 'ravager', 'phantom', 'blaze', 'breeze', 'slime', 'magma_cube', 'zoglin', 'hoglin', 'guardian', 'elder_guardian']);
 const UNSAFE_FOOD = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chorus_fruit', 'suspicious_stew', 'chicken']);
 const AIR_BLOCKS = new Set(['air', 'cave_air', 'void_air']);
-const BLOCK_SCAN_DISTANCE = 16;
-const BLOCK_SCAN_CANDIDATES = 192;
-const VISIBLE_BLOCK_LIMIT = 40;
+const RENDER_DISTANCE_CHUNKS = 12;
+const BLOCK_SCAN_DISTANCE = RENDER_DISTANCE_CHUNKS * 16;
+const SURFACE_RAY_LEVELS = [-0.75, -0.45, -0.2, 0, 0.2, 0.4];
+const SURFACE_RAYS_PER_LEVEL = 24;
+const VISIBLE_BLOCK_LIMIT = 120;
+const CONVERSATION_LIMIT = 20;
 const FACES = { up: [0, 1, 0], down: [0, -1, 0], north: [0, 0, -1], south: [0, 0, 1], east: [1, 0, 0], west: [-1, 0, 0] };
 
 export class BotController {
@@ -31,6 +36,7 @@ export class BotController {
     this.lastAttack = 0;
     this.pathFailure = false;
     this.commandTimes = new Map();
+    this.conversationHistory = [];
     this.serverAuthTimers = new Set();
     this.tickBusy = false;
     this.listeners = [];
@@ -326,6 +332,16 @@ export class BotController {
     const items = this.bot.inventory.items().map(i => `${i.name} x${i.count}`).join(', ') || 'vazio';
     return `Vida ${this.bot.health}/20; fome ${this.bot.food}/20; tarefa: ${this.task}; modo: ${this.spec.mode}; inventário: ${items}.`;
   }
+  rememberConversation(player, message, reply) {
+    this.conversationHistory.push({
+      player: String(player).slice(0, 16),
+      message: String(message).slice(0, 500),
+      reply: String(reply).slice(0, 500),
+    });
+    if (this.conversationHistory.length > CONVERSATION_LIMIT) {
+      this.conversationHistory.splice(0, this.conversationHistory.length - CONVERSATION_LIMIT);
+    }
+  }
   context() {
     const position = this.bot.entity.position;
     return {
@@ -341,30 +357,30 @@ export class BotController {
         loaded: Boolean(p.entity),
       })),
       nearbyBlocks: this.visibleBlocks(position),
-      nearbyEntities: Object.values(this.bot.entities).filter(e => e.position.distanceTo(position) < 24).slice(0, 30).map(e => ({ name: e.name ?? e.username, type: e.type, position: e.position }))
+      nearbyEntities: Object.values(this.bot.entities).filter(e => e.position.distanceTo(position) < 24).slice(0, 30).map(e => ({ name: e.name ?? e.username, type: e.type, position: e.position })),
+      conversationHistory: this.conversationHistory.map(entry => ({ ...entry })),
     };
   }
   visibleBlocks(position = this.bot.entity.position) {
-    if (typeof this.bot.findBlocks !== 'function' || typeof this.bot.blockAt !== 'function' || typeof this.bot.canSeeBlock !== 'function') return [];
+    if (typeof this.bot.world?.raycast !== 'function') return [];
     try {
-      const candidates = this.bot.findBlocks({
-        point: position,
-        maxDistance: BLOCK_SCAN_DISTANCE,
-        count: BLOCK_SCAN_CANDIDATES,
-        matching: block => block && !AIR_BLOCKS.has(block.name),
-      });
-      const visible = [];
-      for (const blockPosition of candidates) {
-        const block = this.bot.blockAt(blockPosition, false);
-        if (!block || AIR_BLOCKS.has(block.name) || !this.bot.canSeeBlock(block)) continue;
-        visible.push({
-          name: block.name,
-          position: { x: block.position.x, y: block.position.y, z: block.position.z },
-          distance: block.position.distanceTo(position),
-        });
-        if (visible.length >= VISIBLE_BLOCK_LIMIT) break;
+      const origin = new Vec3(position.x, position.y + 1.62, position.z);
+      const visible = new Map();
+      for (const vertical of SURFACE_RAY_LEVELS) {
+        for (let index = 0; index < SURFACE_RAYS_PER_LEVEL; index++) {
+          const angle = index * Math.PI * 2 / SURFACE_RAYS_PER_LEVEL;
+          const direction = new Vec3(Math.cos(angle), vertical, Math.sin(angle)).normalize();
+          const hit = this.bot.world.raycast(origin, direction, BLOCK_SCAN_DISTANCE, block => block && !AIR_BLOCKS.has(block.name));
+          if (!hit?.position || AIR_BLOCKS.has(hit.name)) continue;
+          const key = `${hit.position.x},${hit.position.y},${hit.position.z}`;
+          if (!visible.has(key)) visible.set(key, {
+            name: hit.name,
+            position: { x: hit.position.x, y: hit.position.y, z: hit.position.z },
+            distance: hit.position.distanceTo(position),
+          });
+        }
       }
-      return visible;
+      return [...visible.values()].sort((a, b) => a.distance - b.distance).slice(0, VISIBLE_BLOCK_LIMIT);
     } catch {
       // Chunks can unload while the snapshot is being collected.
       return [];

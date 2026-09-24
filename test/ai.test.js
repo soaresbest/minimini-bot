@@ -202,12 +202,15 @@ test('limita e filtra o estado do mundo enviado à IA e retira chaves da respost
     heldItem: { name: 'iron_pickaxe', count: 1, secret: 'never-send' },
     inventory: Array.from({ length: 300 }, () => ({ name: 'bread', count: 1 })),
     players: [{ name: 'Alex', position: { x: 2, y: 64, z: 3 }, distance: 3.6, loaded: true, address: 'never-send' }],
-    nearbyBlocks: Array.from({ length: 100 }, (_, index) => ({ name: 'stone', position: { x: index, y: 64, z: 0 }, distance: index, metadata: 'never-send' })),
+    nearbyBlocks: Array.from({ length: 150 }, (_, index) => ({ name: 'stone', position: { x: index, y: 64, z: 0 }, distance: index, metadata: 'never-send' })),
+    conversationHistory: Array.from({ length: 30 }, (_, index) => ({ player: 'Alex', message: `pedido ${index}`, reply: `resposta ${index}`, secret: 'never-send' })),
   },
     fetchImpl: async (_url, options) => {
       const input = JSON.parse(JSON.parse(options.body).input[0].content);
       assert.equal(input.context.inventory.length, 50);
-      assert.equal(input.context.nearbyBlocks.length, 40);
+      assert.equal(input.context.nearbyBlocks.length, 120);
+      assert.equal(input.context.conversationHistory.length, 20);
+      assert.deepEqual(input.context.conversationHistory[0], { player: 'Alex', message: 'pedido 10', reply: 'resposta 10' });
       assert.deepEqual(input.context.heldItem, { name: 'iron_pickaxe', count: 1 });
       assert.deepEqual(input.context.players[0], { name: 'Alex', position: { x: 2, y: 64, z: 3 }, distance: 3.6, loaded: true });
       assert.equal(input.context.health, 18);
