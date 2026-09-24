@@ -13,7 +13,6 @@ const AUTH_TYPES = new Set(['offline', 'microsoft']);
 const MISSING_CONFIG = Symbol('missing configuration');
 const DEFAULT_SETTINGS = Object.freeze({
   maxBots: 8,
-  progressIntervalMs: 15_000,
   reconnectDelayMs: 5_000,
   commandCooldownMs: 1_000,
   actionTimeoutMs: 120_000,
@@ -182,7 +181,6 @@ export function validateConfig(input, { requireAiKeys = true } = {}) {
   const rawSettings = object(config.settings, 'Preferências', {});
   const settings = {
     maxBots: integer(rawSettings.maxBots, 'Limite de bots', DEFAULT_SETTINGS.maxBots, 1, 64),
-    progressIntervalMs: integer(rawSettings.progressIntervalMs, 'Intervalo de progresso', DEFAULT_SETTINGS.progressIntervalMs, 1000, 3_600_000),
     reconnectDelayMs: integer(rawSettings.reconnectDelayMs, 'Intervalo de reconexão', DEFAULT_SETTINGS.reconnectDelayMs, 1000, 300_000),
     commandCooldownMs: integer(rawSettings.commandCooldownMs, 'Intervalo entre comandos', DEFAULT_SETTINGS.commandCooldownMs, 0, 60_000),
     actionTimeoutMs: integer(rawSettings.actionTimeoutMs, 'Tempo limite de ação', DEFAULT_SETTINGS.actionTimeoutMs, 1000, 3_600_000),

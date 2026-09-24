@@ -39,7 +39,7 @@ Somente mensagens com uma menção completa, como `@bot1`, ativam o bot. Os nome
 | `@bot1 mode(ia)` | Ativa IA, exigindo a chave do provedor configurado. |
 | `@bot1 mode(default)` | Volta aos comandos diretos. |
 
-O bot confirma o recebimento e informa o progresso periodicamente, por padrão a cada 15 segundos. Comandos desconhecidos no modo simples recebem `Não entendi. Use help.`. Consultar `status` ou `help` preserva a tarefa atual. Um novo comando de ação substitui a tarefa anterior; `stop` tem prioridade sobre o intervalo entre comandos.
+O bot confirma o recebimento, mas só informa seu estado completo quando recebe `status`. A única exceção automática é um alerta quando vida ou fome chegam a `8/20` ou menos e não há comida segura no inventário. Comandos desconhecidos no modo simples recebem `Não entendi. Use help.`. Consultar `status` ou `help` preserva a tarefa atual. Um novo comando de ação substitui a tarefa anterior; `stop` cancela imediatamente.
 
 Em servidores com plugin de autenticação, `server.registration: true` faz cada bot gerar uma senha aleatória de 8 dígitos na primeira conexão. A senha é salva por servidor e nome do bot em `~/.minimini-bot/config.json` antes do envio de `/register senha senha`; nas reconexões, o bot reutiliza a mesma senha com `/login senha`. A senha nunca aparece nos logs nem nas respostas normais do bot. Desative essa opção em servidores sem `/register`.
 
@@ -93,7 +93,7 @@ Consulte [configuração detalhada](docs/configuration.md) e [integrações de I
 
 ## Sobrevivência e conexão
 
-Todos os bots, em qualquer modo, comem automaticamente quando a fome chega ao limite configurado, se houver alimento seguro no inventário. A alimentação pausa o movimento e retoma a tarefa; se receber `stop` durante a refeição, permanece parado depois. Sem comida, o bot avisa periodicamente. Entregue alimentos e armas pelo inventário normal do Minecraft.
+Todos os bots, em qualquer modo, comem automaticamente quando a fome chega ao limite configurado, se houver alimento seguro no inventário. A alimentação pausa o movimento e retoma a tarefa; se receber `stop` durante a refeição, permanece parado depois. Sem comida segura, o bot alerta somente quando a fome ou a vida chega a `8/20` ou menos, repetindo no máximo uma vez por minuto enquanto o risco continuar. Entregue alimentos e armas pelo inventário normal do Minecraft.
 
 O bot evita alimentos prejudiciais/teletransporte e caminhos que exigem alterar o terreno. Isso não garante sobrevivência a todos os perigos, nem implementa coleta autônoma de recursos. Ao morrer, cancela a tarefa e aguarda o respawn do servidor. Falhas de conexão iniciam novas tentativas com intervalo crescente; remover um bot ou encerrar o programa cancela essas tentativas.
 

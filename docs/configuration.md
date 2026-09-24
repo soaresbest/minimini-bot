@@ -41,7 +41,6 @@ O arquivo fica na home do usuário que executa o programa:
   },
   "settings": {
     "maxBots": 8,
-    "progressIntervalMs": 15000,
     "reconnectDelayMs": 5000,
     "commandCooldownMs": 1000,
     "actionTimeoutMs": 120000,
@@ -86,4 +85,4 @@ O JSON pode conter chaves de IA e senhas de `/register` em texto simples. Não o
 
 Os bots gerenciados por este processo são ignorados automaticamente. O protocolo Minecraft não identifica de forma confiável se outra conexão é humana ou automatizada; use as listas de acesso para controlar bots externos.
 
-`maxBots` limita o total configurado, com padrão de 8 e intervalo de 1 a 64. `progressIntervalMs` controla a frequência de mensagens de progresso; `reconnectDelayMs`, a espera entre tentativas de reconexão; `commandCooldownMs`, o intervalo mínimo entre comandos; e `actionTimeoutMs`, o limite das ações finitas. Esses tempos são em milissegundos. `autoEatAt` é o limiar de fome entre 0 e 20 que aciona a tentativa de alimentação automática quando houver comida adequada no inventário. A sobrevivência continua ativa nos dois modos.
+`maxBots` limita o total configurado, com padrão de 8 e intervalo de 1 a 64. `reconnectDelayMs` define a espera entre tentativas de reconexão; `commandCooldownMs`, o intervalo mínimo entre comandos; e `actionTimeoutMs`, o limite das ações finitas. Esses tempos são em milissegundos. `autoEatAt` é o limiar de fome entre 0 e 20 que aciona a tentativa de alimentação automática quando houver comida adequada no inventário. O estado completo só é enviado por `status`; sem comida segura, um alerta automático aparece quando a fome ou a vida chega a 8 ou menos, no máximo uma vez por minuto. A sobrevivência continua ativa nos dois modos.

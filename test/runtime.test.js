@@ -327,6 +327,33 @@ test('morte durante alimentação não restaura item nem tarefa da vida anterior
   assert.equal(h.controller.eating, false);
 });
 
+test('não envia progresso periódico e só alerta estado crítico sem comida', async t => {
+  const h = harness(); t.after(h.close);
+  h.controller.task = 'indo para 100, 64, 100';
+  await h.controller.tick();
+  assert.deepEqual(h.said, []);
+
+  h.bot.food = 8;
+  await h.controller.tick();
+  assert.equal(h.said.length, 1);
+  assert.match(h.said[0], /vida 20\/20; fome 8\/20;.*sem comida segura/u);
+  await h.controller.tick();
+  assert.equal(h.said.length, 1, 'o alerta não deve inundar o chat');
+
+  h.bot.food = 20;
+  h.bot.health = 20;
+  await h.controller.tick();
+  h.bot.health = 8;
+  await h.controller.tick();
+  assert.equal(h.said.length, 2);
+  assert.match(h.said[1], /vida 8\/20; fome 20\/20/u);
+
+  h.bot.inventory.items = () => [{ name: 'bread', count: 1, type: 1 }];
+  h.bot.health = 7;
+  await h.controller.tick();
+  assert.equal(h.said.length, 2, 'com comida segura não deve haver alerta automático');
+});
+
 test('cancelar equip antes de colocar um bloco não coloca depois da conclusão tardia', async t => {
   const h = harness(); t.after(h.close);
   h.bot.inventory.items = () => [{ name: 'stone', type: 1 }];

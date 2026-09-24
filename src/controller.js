@@ -27,10 +27,9 @@ export class BotController {
     this.following = null;
     this.handBusy = false;
     this.eating = false;
-    this.lastFoodWarning = 0;
+    this.lastSurvivalWarning = null;
     this.lastAttack = 0;
     this.pathFailure = false;
-    this.lastProgress = Date.now();
     this.commandTimes = new Map();
     this.serverAuthTimers = new Set();
     this.tickBusy = false;
@@ -113,7 +112,6 @@ export class BotController {
     const work = new AbortController();
     this.abort = work;
     this.task = label;
-    this.lastProgress = Date.now();
     return work;
   }
   setGoal(goal, dynamic = false) {
@@ -284,12 +282,8 @@ export class BotController {
   }
   async eat() {
     if (this.eating || this.handBusy || this.bot.food > this.settings.autoEatAt || this.bot.food >= 20) return;
-    const food = this.bot.inventory.items().filter(i => this.bot.registry.foodsByName?.[i.name] && !UNSAFE_FOOD.has(i.name))
-      .sort((a, b) => (this.bot.registry.foodsByName[b.name].foodPoints ?? 0) - (this.bot.registry.foodsByName[a.name].foodPoints ?? 0))[0];
-    if (!food) {
-      if (Date.now() - this.lastFoodWarning > 60000) { this.say('Estou com fome e sem comida segura no inventário.'); this.lastFoodWarning = Date.now(); }
-      return;
-    }
+    const food = this.safeFood();
+    if (!food) return;
     this.eating = true;
     const life = this.life;
     const previous = this.bot.heldItem;
@@ -307,6 +301,17 @@ export class BotController {
       if (this.ready && !this.closed && this.goal) this.bot.pathfinder.setGoal(this.goal.goal, this.goal.dynamic);
     }
   }
+  safeFood() {
+    return this.bot.inventory.items().filter(i => this.bot.registry.foodsByName?.[i.name] && !UNSAFE_FOOD.has(i.name))
+      .sort((a, b) => (this.bot.registry.foodsByName[b.name].foodPoints ?? 0) - (this.bot.registry.foodsByName[a.name].foodPoints ?? 0))[0];
+  }
+  warnSurvival() {
+    const needsWarning = (this.bot.food <= 8 || this.bot.health <= 8) && !this.safeFood();
+    if (!needsWarning) { this.lastSurvivalWarning = null; return; }
+    if (this.lastSurvivalWarning !== null && Date.now() - this.lastSurvivalWarning < 60000) return;
+    this.say(`Alerta: vida ${this.bot.health}/20; fome ${this.bot.food}/20; estou sem comida segura no inventário.`);
+    this.lastSurvivalWarning = Date.now();
+  }
   async tick() {
     if (!this.ready || this.closed || this.tickBusy) return;
     this.tickBusy = true;
@@ -314,11 +319,7 @@ export class BotController {
       await this.eat();
       if (!this.ready || this.closed) return;
       await this.updateFollow();
-      if (this.task !== 'parado' && Date.now() - this.lastProgress >= this.settings.progressIntervalMs) {
-        const p = this.bot.entity.position;
-        this.say(`${this.task}. Posição ${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}. Vida ${this.bot.health}/20; fome ${this.bot.food}/20.`);
-        this.lastProgress = Date.now();
-      }
+      this.warnSurvival();
     } finally { this.tickBusy = false; }
   }
   status() {
