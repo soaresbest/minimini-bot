@@ -6,7 +6,7 @@ import { RailwayError, RailwayTask, findTerrainPath } from '../src/railway.js';
 const { Vec3 } = vec3Package;
 const FLUIDS = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
 
-function terrainRun(blockNameAt, start = { x: 0, y: 64, z: 0 }) {
+function terrainRun(blockNameAt, start = { x: 0, y: 64, z: 0 }, maximumBlocks = 100) {
   const built = [];
   const bot = {
     entity: { position: new Vec3(start.x + 0.5, start.y, start.z + 0.5) },
@@ -23,7 +23,7 @@ function terrainRun(blockNameAt, start = { x: 0, y: 64, z: 0 }) {
     const floor = bot.blockAt(point.offset(0, -1, 0));
     assert.notEqual(floor.name, 'air', 'não cria ponte ou escada artificial sobre vazio');
     built.push(cell);
-    assert.ok(built.length < 100, 'a rota curta não deve entrar em loop');
+    assert.ok(built.length < maximumBlocks, 'a rota não deve entrar em loop');
     bot.entity.position = point.offset(0.5, 0, 0.5);
     return { usedStoneSupport: FLUIDS.has(floor.name) };
   };
@@ -34,6 +34,44 @@ function runTo(task, end) {
   return task.run({ startX: null, startY: null, startZ: null,
     endX: end.x, endY: end.y ?? null, endZ: end.z, allowCommands: false });
 }
+
+for (const sign of [1, -1]) {
+  test(`contorna montanha de 500 blocos com chunks móveis e saída lateral ${sign}`, async () => {
+    const { task, built } = terrainRun(({ x, y, z }) => {
+      const mountain = x >= 8 && x <= 20 && Math.abs(z) <= 250;
+      const sideWall = sign < 0 && z >= 5;
+      return y <= (mountain || sideWall ? 90 : 63) ? 'stone' : 'air';
+    }, { x: 0, y: 64, z: 0 }, 1000);
+    const read = task.bot.blockAt;
+    task.bot.blockAt = point => Math.max(Math.abs(point.x - task.bot.entity.position.x),
+      Math.abs(point.z - task.bot.entity.position.z)) > 48 ? null : read(point);
+    const events = [];
+    task.controller.manager = { log: line => events.push(JSON.parse(line.slice(10))) };
+    await runTo(task, { x: 40, z: 0 });
+    assert.deepEqual(built.at(-1).position, { x: 40, y: 64, z: 0 });
+    assert.ok(built.some(({ position }) => position.z * sign > 250));
+    assert.ok(built.every(({ position }) => position.y === 64));
+    assert.equal(new Set(built.map(({ position: p }) => `${p.x},${p.z}`)).size, built.length);
+    const contours = events.filter(event => event.event === 'contornando_montanha');
+    assert.ok(contours.length > 3, 'contorno continua além da primeira janela de busca');
+    assert.ok(contours.every(event => event.direction.z === sign), 'mantém o lado escolhido');
+  });
+}
+
+test('contorno não inventa saída por blocos desconhecidos ou por um beco', () => {
+  const { task } = terrainRun(() => 'air');
+  task.contourDirection = { x: 0, z: 1 };
+  assert.equal(task.planWideContour({ start: { x: 0, y: 64, z: 0 },
+    goal: { x: 40, y: null, z: 0 }, heightsAt: (x, z) => x === 0 && z > 0 && z <= 32 ? [64] : [] }), null);
+});
+
+test('cancelamento impede novo trecho lateral de contorno', () => {
+  const { task } = terrainRun(() => 'air');
+  task.contourDirection = { x: 0, z: 1 };
+  task.signal = AbortSignal.abort();
+  assert.throws(() => task.planWideContour({ start: { x: 0, y: 64, z: 0 },
+    goal: { x: 40, y: null, z: 0 }, heightsAt: () => [64] }), { name: 'AbortError' });
+});
 
 test('início automático sobre grass path parcial usa o nível acima do piso', async () => {
   const { task, built } = terrainRun(({ y }) => y === 63 ? 'dirt_path' : y < 63 ? 'dirt' : 'air');

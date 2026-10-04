@@ -170,7 +170,7 @@ export class RailwayTask {
           this.log('continuando_desvio', { from: current, to: plannedPath.at(-1), steps: plannedPath.length - 1 });
         }
         // Um desvio pode começar se afastando do destino. Não troque sua saída
-        // por uma nova meta "40 blocos mais perto" a cada lote: isso faria o
+        // por uma nova meta mais próxima a cada lote: isso faria o
         // bot voltar ao obstáculo. Reserve a última posição para conhecer a
         // orientação do próximo trilho antes de terminar o trecho atual.
         const path = plannedPath;
@@ -234,14 +234,42 @@ export class RailwayTask {
     // consultar os mesmos blocos centenas de vezes. Nunca reutilize entre lotes.
     this.planningBlocks = new Map();
     try {
+      if (this.contourDirection) {
+        // Durante o contorno, reduzir a distância Manhattan voltando pela
+        // lateral da mesma parede não significa ter vencido o obstáculo.
+        // Primeiro confirme uma passagem para o outro lado da montanha.
+        const direction = this.contourDirection;
+        const axis = direction.x === 0 ? 'x' : 'z';
+        const delta = options.goal[axis] - options.start[axis];
+        const goal = { ...options.start, y: null,
+          [axis]: options.start[axis] + Math.sign(delta) * Math.min(48, Math.abs(delta)) };
+        try {
+          const path = findTerrainPath({ ...options, goal, goalDistance: Math.abs(delta) >= 48 ? 16 : 0,
+            radius: SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+          if (path.length > 2) {
+            this.contourDirection = null;
+            this.log('saida_do_contorno', { from: options.start, to: path.at(-1) });
+            return path;
+          }
+        } catch (error) {
+          if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
+        }
+        const path = this.planWideContour(options);
+        if (path) return path;
+        throw new RailwayError('não encontrei continuação segura para contornar a montanha pelo piso carregado', 'RAILWAY_NO_ROUTE');
+      }
       try {
-        return findTerrainPath(options);
+        const path = findTerrainPath(options);
+        this.contourDirection = null;
+        return path;
       } catch (error) {
         if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
         this.log('ampliando_busca', { from: options.start, radius: EXTENDED_SEARCH_RADIUS,
           maxNodes: EXTENDED_SEARCH_NODE_LIMIT, forcedFirst: options.forcedFirst });
         try {
-          return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+          const path = findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+          this.contourDirection = null;
+          return path;
         } catch (extendedError) {
           if (extendedError?.code !== 'RAILWAY_NO_ROUTE') throw extendedError;
           // Um trilho comum concluído pela própria obra pode mudar a saída
@@ -252,12 +280,34 @@ export class RailwayTask {
             this.log('ajustando_saida', { from: options.start, forcedFirst: options.forcedFirst,
               radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
             try {
-              return findTerrainPath({ ...options, forcedFirst: null,
+              const path = findTerrainPath({ ...options, forcedFirst: null,
                 radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+              this.contourDirection = null;
+              return path;
             } catch (adjustedError) {
               if (adjustedError?.code !== 'RAILWAY_NO_ROUTE') throw adjustedError;
             }
           }
+          // Reduza apenas quando a janela de chunks impede enxergar o horizonte
+          // normal. Em terreno carregado, mantenha a antecipação de becos longos.
+          const dx = options.goal.x - options.start.x;
+          const dz = options.goal.z - options.start.z;
+          const axis = Math.abs(dx) >= Math.abs(dz) ? 'x' : 'z';
+          const probe = { ...options.start,
+            [axis]: options.start[axis] + Math.sign(options.goal[axis] - options.start[axis]) * PLAN_HORIZON };
+          const remaining = horizontalDistance(options.start, options.goal);
+          if (remaining > 32 && !this.blockAt(vec(probe))) {
+            try {
+              const path = findTerrainPath({ ...options, goalDistance: remaining - 32,
+                radius: SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+              this.log('horizonte_reduzido', { from: options.start, to: path.at(-1), reason: 'chunks_nao_carregados' });
+              return path;
+            } catch (error) {
+              if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
+            }
+          }
+          const contour = this.planWideContour(options);
+          if (contour) return contour;
           this.log('sem_rota', { from: options.start, surroundings: this.describeTerrain(options.start) });
           throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; rampas precisam variar no máximo um bloco por posição`, 'RAILWAY_NO_ROUTE');
         }
@@ -265,6 +315,48 @@ export class RailwayTask {
     } finally {
       this.planningBlocks = null;
     }
+  }
+
+  planWideContour(options) {
+    // Não imponha progresso em direção ao destino em todos os trechos: uma
+    // montanha pode exceder tanto o raio da busca quanto os chunks carregados.
+    // Mantenha o lado escolhido até encontrar novamente uma rota de progresso.
+    const dx = options.goal.x - options.start.x;
+    const dz = options.goal.z - options.start.z;
+    const tangent = Math.abs(dx) >= Math.abs(dz) ? { x: 0, z: 1 } : { x: 1, z: 0 };
+    if (!this.contourDirection) {
+      const forward = tangent.x === 0 ? { x: Math.sign(dx), z: 0 } : { x: 0, z: Math.sign(dz) };
+      let mountain = false;
+      for (let distance = 1; distance <= 48; distance++) {
+        const block = this.blockAt(new Vec3(options.start.x + forward.x * distance,
+          options.start.y + 1, options.start.z + forward.z * distance));
+        if (!block) break;
+        if (this.isSolid(block) && !RAILS.has(block.name)) { mountain = true; break; }
+      }
+      // Não transforme um abismo/área desconhecida em uma caminhada lateral
+      // ilimitada. Este fallback é específico para obstáculos altos visíveis.
+      if (!mountain) return null;
+    }
+    const directions = this.contourDirection ? [this.contourDirection]
+      : [tangent, { x: -tangent.x, z: -tangent.z }];
+    for (const direction of directions) {
+      this.signal.throwIfAborted();
+      const goal = { x: options.start.x + direction.x * 48,
+        y: null, z: options.start.z + direction.z * 48 };
+      try {
+        // A margem de 16 aceita uma saída lateral segura, sem exigir um ponto
+        // exato. O A* exige continuação e mantém todas as regras de piso/rampa.
+        const path = findTerrainPath({ ...options, goal, goalDistance: 16,
+          radius: SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+        this.contourDirection = direction;
+        this.log('contornando_montanha', { from: options.start, to: path.at(-1),
+          direction, steps: path.length - 1, remaining: horizontalDistance(path.at(-1), options.goal) });
+        return path;
+      } catch (error) {
+        if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
+      }
+    }
+    return null;
   }
 
   terrainRailHeights(x, z, currentY, previous = null) {
