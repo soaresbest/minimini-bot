@@ -143,7 +143,7 @@ export class RailwayTask {
     let built = 0;
     let lastPowered = 0;
     const builtColumns = new Set([columnKey(start)]);
-    const firstResult = await this.buildCell({ index: 0, position: start, powered: true });
+    const firstResult = await this.buildCell({ index: 0, position: start, previous: null, powered: true });
     if (firstResult.usedStoneSupport) passageDirection = preferredDirection(start, end)?.name ?? null;
 
     while (!samePosition(current, end)) {
@@ -159,7 +159,7 @@ export class RailwayTask {
           const powered = endpoint || index - lastPowered >= 2;
           if (powered) lastPowered = index;
           this.controller.task = `subindo parede com pedra: ${current.y + 1}/${climbTargetY}`;
-          await this.buildCell({ index, position, powered, slope: true, corner: false, forceStone: true });
+          await this.buildCell({ index, position, previous: current, powered, slope: true, corner: false, forceStone: true });
           builtColumns.add(columnKey(position));
           previous = current;
           current = position;
@@ -191,7 +191,7 @@ export class RailwayTask {
         const powered = !corner && (endpoint || index - lastPowered >= 8);
         if (powered) lastPowered = index;
         this.controller.task = `construindo passagem de pedra: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(fallback.position, end)}`;
-        await this.buildCell({ index, position: fallback.position, powered, slope: false, corner, forceStone: true });
+        await this.buildCell({ index, position: fallback.position, previous: current, powered, slope: false, corner, forceStone: true });
         builtColumns.add(columnKey(fallback.position));
         passageDirection = directionBetween(current, fallback.position);
         previous = current;
@@ -213,7 +213,7 @@ export class RailwayTask {
         const maximumGap = slope ? 3 : 8;
         const powered = !corner && (endpoint || index - lastPowered >= maximumGap);
         if (powered) lastPowered = index;
-        const cell = { index, position, powered, slope, corner };
+        const cell = { index, position, previous: current, powered, slope, corner };
         this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
         const result = await this.buildCell(cell);
         builtColumns.add(columnKey(position));
@@ -289,22 +289,17 @@ export class RailwayTask {
     for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
 
     const support = point.offset(0, -1, 0);
+    const previousSupport = cell.previous ? vec(cell.previous).offset(0, -1, 0) : null;
     const missingSupport = !this.isSolid(this.blockAt(support));
     const usedStoneSupport = cell.forceStone || waterOnPath || missingSupport;
     if (cell.powered) {
-      await this.preparePoweredSupport(support);
+      await this.replace(support, 'redstone_block', { preferredReference: previousSupport });
     } else if (usedStoneSupport) {
       await this.replace(support, 'stone');
     }
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
     return { usedStoneSupport };
-  }
-
-  async preparePoweredSupport(support) {
-    if (this.blockAt(support)?.name === 'redstone_block') return;
-    if (!this.findReference(support)) await this.replace(support.offset(0, -1, 0), 'stone');
-    await this.replace(support, 'redstone_block');
   }
 
   async moveNear(point) {
@@ -332,7 +327,7 @@ export class RailwayTask {
     }, this.signal);
   }
 
-  async replace(point, item) {
+  async replace(point, item, { preferredReference = null } = {}) {
     let block = this.blockAt(point);
     if (!block) throw new RailwayError('o trecho seguinte ainda não foi carregado pelo servidor');
     if (block.name === item) return;
@@ -343,7 +338,7 @@ export class RailwayTask {
     }
     for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
       await this.ensureMaterial(item);
-      const reference = this.findReference(point);
+      const reference = this.findReference(point, preferredReference);
       if (!reference) throw new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`);
       const { block: referenceBlock, face } = reference;
       try {
@@ -370,7 +365,13 @@ export class RailwayTask {
     throw new RailwayError(`não consegui confirmar ${item} em ${format(point)}`);
   }
 
-  findReference(target) {
+  findReference(target, preferredPosition = null) {
+    if (preferredPosition) {
+      const face = target.minus(preferredPosition);
+      const adjacent = Math.abs(face.x) + Math.abs(face.y) + Math.abs(face.z) === 1;
+      const preferredBlock = this.blockAt(preferredPosition);
+      if (adjacent && this.isSolid(preferredBlock)) return { block: preferredBlock, face };
+    }
     for (const face of FACES) {
       const referencePosition = target.offset(-face.x, -face.y, -face.z);
       const block = this.blockAt(referencePosition);

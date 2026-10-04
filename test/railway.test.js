@@ -65,7 +65,7 @@ test('coordenadas automáticas usam a posição atual e aceitam qualquer Y no de
   const built = [];
   task.buildCell = async cell => built.push(cell);
   await task.run({ startX: null, startY: null, startZ: null, endX: null, endY: null, endZ: null, allowCommands: false });
-  assert.deepEqual(built, [{ index: 0, position: { x: 4, y: 71, z: 9 }, powered: true }]);
+  assert.deepEqual(built, [{ index: 0, position: { x: 4, y: 71, z: 9 }, previous: null, powered: true }]);
 });
 
 test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () => {
@@ -131,21 +131,22 @@ test('reposição por comando é opt-in e usa somente comando e material fixos',
   assert.equal(sent.length, 1);
 });
 
-test('trilho eletrificado cria apoio de pedra quando a redstone não tem apoio', async () => {
-  const support = new Vec3(10, 63, 20);
-  const placed = [];
-  const task = new RailwayTask({ bot: {
-    blockAt: () => ({ name: 'air', boundingBox: 'empty' }),
-  } }, new AbortController().signal);
-  task.findReference = () => null;
-  task.replace = async (point, item) => placed.push({ point: point.toString(), item });
-
-  await task.preparePoweredSupport(support);
-
-  assert.deepEqual(placed, [
-    { point: new Vec3(10, 62, 20).toString(), item: 'stone' },
-    { point: support.toString(), item: 'redstone_block' },
+test('redstone usa o piso anterior como apoio preferencial', () => {
+  const target = new Vec3(1, 63, 0);
+  const previousFloor = new Vec3(0, 63, 0);
+  const lowerFloor = new Vec3(1, 62, 0);
+  const blocks = new Map([
+    [previousFloor.toString(), { name: 'stone', boundingBox: 'block', position: previousFloor }],
+    [lowerFloor.toString(), { name: 'stone', boundingBox: 'block', position: lowerFloor }],
   ]);
+  const task = new RailwayTask({ bot: {
+    blockAt: point => blocks.get(point.toString()) ?? { name: 'air', boundingBox: 'empty', position: point },
+  } }, new AbortController().signal);
+
+  const reference = task.findReference(target, previousFloor);
+
+  assert.equal(reference.block.position.toString(), previousFloor.toString());
+  assert.deepEqual(reference.face, new Vec3(1, 0, 0));
 });
 
 test('colocação relê o mundo e repete uma recusa transitória do servidor', async () => {
