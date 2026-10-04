@@ -15,6 +15,7 @@ const WALL_MAX_HEIGHT = 48;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
 const PLACE_RETRY_MS = 200;
+const SUPPORT_MAX_BLOCKS = 3;
 const AIR = new Set(['air', 'cave_air', 'void_air']);
 const LIQUID = new Set(['water', 'flowing_water']);
 const LAVA = new Set(['lava', 'flowing_lava']);
@@ -119,6 +120,7 @@ export class RailwayTask {
     this.bot = controller.bot;
     this.signal = signal;
     this.allowCommands = false;
+    this.completedRailColumns = new Map();
   }
 
   async run(action) {
@@ -284,6 +286,8 @@ export class RailwayTask {
 
   async buildCell(cell) {
     const point = vec(cell.position);
+    this.completedRailColumns ??= new Map();
+    if (cell.previous) this.completedRailColumns.set(columnKey(cell.previous), cell.previous.y);
     await this.moveNear(point);
     const waterOnPath = LIQUID.has(this.blockAt(point)?.name);
     for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
@@ -295,10 +299,11 @@ export class RailwayTask {
     if (cell.powered) {
       await this.replace(support, 'redstone_block', { preferredReference: previousSupport });
     } else if (usedStoneSupport) {
-      await this.replace(support, 'stone');
+      await this.replace(support, 'stone', { preferredReference: previousSupport });
     }
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
+    this.completedRailColumns.set(columnKey(point), point.y);
     return { usedStoneSupport };
   }
 
@@ -327,18 +332,18 @@ export class RailwayTask {
     }, this.signal);
   }
 
-  async replace(point, item, { preferredReference = null } = {}) {
+  async replace(point, item, { preferredReference = null, buildSupport = true } = {}) {
     let block = this.blockAt(point);
     if (!block) throw new RailwayError('o trecho seguinte ainda não foi carregado pelo servidor');
     if (block.name === item) return;
+    this.signal.throwIfAborted();
+    await this.ensureMaterial(item);
     let temporaryReference = null;
     if (!AIR.has(block.name) && !LIQUID.has(block.name)) {
       if (!this.bot.canDigBlock(block)) throw new RailwayError(`não posso substituir ${block.name} em ${format(point)}`);
-      // Se o bloco substituído for a única referência disponível, preserva uma
-      // face antes de removê-lo. Submerso, faz isso mesmo quando há areia abaixo,
-      // pois a atualização de física pode invalidar essa referência após o dig.
-      const submerged = LIQUID.has(this.blockAt(point.offset(0, 1, 0))?.name);
-      if (item === 'redstone_block' && (submerged || !this.findReference(point, preferredReference))) {
+      // Preserve uma face antes de escavar um bloco isolado. Água por si só
+      // não exige apoio temporário quando já existe uma face sólida vizinha.
+      if (item === 'redstone_block' && !this.findReference(point, preferredReference)) {
         temporaryReference = await this.createTemporaryReference(point, preferredReference);
       }
     }
@@ -349,8 +354,12 @@ export class RailwayTask {
       }
       for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
         await this.ensureMaterial(item);
-        const reference = this.findReference(point, preferredReference);
-        if (!reference) throw new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`);
+        let reference = this.findReference(point, preferredReference);
+        if (!reference && buildSupport && ['stone', 'redstone_block'].includes(item)) {
+          await this.connectSupport(point, preferredReference);
+          reference = this.findReference(point, preferredReference);
+        }
+        if (!reference) throw this.supportError(point, item, preferredReference);
         const { block: referenceBlock, face } = reference;
         try {
           await this.controller.useHand(async () => {
@@ -365,7 +374,7 @@ export class RailwayTask {
           await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
           if (this.blockAt(point)?.name === item) return;
           if (attempt === PLACE_ATTEMPTS) {
-            throw new RailwayError(`o servidor recusou colocar ${item} em ${format(point)} após ${PLACE_ATTEMPTS} tentativas`);
+            throw new RailwayError(`o servidor recusou colocar ${item} em ${format(point)} após ${PLACE_ATTEMPTS} tentativas`, 'RAILWAY_PLACEMENT');
           }
           await this.moveNear(point);
           continue;
@@ -373,10 +382,69 @@ export class RailwayTask {
         if (this.blockAt(point)?.name === item) return;
         if (attempt < PLACE_ATTEMPTS) await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
       }
-      throw new RailwayError(`não consegui confirmar ${item} em ${format(point)}`);
+      throw new RailwayError(`não consegui confirmar ${item} em ${format(point)}`, 'RAILWAY_PLACEMENT');
     } finally {
-      if (temporaryReference && this.blockAt(temporaryReference)?.name === 'stone') await this.clear(temporaryReference);
+      if (!this.signal.aborted && this.blockAt(point)?.name === item
+        && temporaryReference && this.blockAt(temporaryReference)?.name === 'stone') await this.clear(temporaryReference);
     }
+  }
+
+  supportError(point, item, previousSupport) {
+    const neighbors = FACES.map(face => {
+      const position = point.minus(face);
+      return { position, block: this.blockAt(position)?.name ?? 'não carregado' };
+    });
+    this.controller.manager?.log?.(`[railway] ${JSON.stringify({
+      item, target: point, previousSupport, bot: this.bot.entity.position, neighbors,
+    })}`);
+    return new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`, 'RAILWAY_NO_SUPPORT');
+  }
+
+  findSupportConnection(target, previousSupport, excluded = new Set()) {
+    // Busca curta pelo espaço vazio, do alvo até uma face sólida. Os apoios
+    // ficam no nível do piso ou abaixo, sem invadir o trilho/corredor anterior.
+    const queue = [{ position: target, path: [] }];
+    const seen = new Set([target.toString()]);
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const { position, path } = queue[cursor];
+      if (path.length && this.findReference(position, previousSupport)) return path.reverse();
+      if (path.length >= SUPPORT_MAX_BLOCKS) continue;
+      for (const face of FACES) {
+        const next = position.minus(face);
+        const key = next.toString();
+        if (seen.has(key) || excluded.has(key) || next.y > target.y) continue;
+        const railY = this.completedRailColumns?.get(columnKey(next));
+        if (railY !== undefined && next.y >= railY) continue;
+        if (previousSupport && next.x === previousSupport.x && next.z === previousSupport.z
+          && next.y > previousSupport.y) continue;
+        const block = this.blockAt(next);
+        if (!block || (!AIR.has(block.name) && !LIQUID.has(block.name))) continue;
+        seen.add(key);
+        queue.push({ position: next, path: [...path, next] });
+      }
+    }
+    return null;
+  }
+
+  async connectSupport(target, previousSupport) {
+    const excluded = new Set();
+    for (let attempt = 0; attempt < PLACE_ATTEMPTS; attempt++) {
+      this.signal.throwIfAborted();
+      if (this.findReference(target, previousSupport)) return;
+      const path = this.findSupportConnection(target, previousSupport, excluded);
+      if (!path) throw this.supportError(target, 'stone/redstone_block', previousSupport);
+      for (const point of path) {
+        try {
+          await this.replace(point, 'stone', { preferredReference: previousSupport, buildSupport: false });
+        } catch (error) {
+          this.signal.throwIfAborted();
+          if (!['RAILWAY_NO_SUPPORT', 'RAILWAY_PLACEMENT'].includes(error.code)) throw error;
+          excluded.add(point.toString());
+          break;
+        }
+      }
+    }
+    if (!this.findReference(target, previousSupport)) throw this.supportError(target, 'stone/redstone_block', previousSupport);
   }
 
   async createTemporaryReference(target, previousSupport) {
@@ -389,10 +457,17 @@ export class RailwayTask {
       .map(face => target.plus(face))
       .filter(point => !previousSupport || point.x !== previousSupport.x || point.z !== previousSupport.z);
     for (const point of candidates) {
+      const railY = this.completedRailColumns?.get(columnKey(point));
+      if (railY !== undefined && point.y >= railY) continue;
       const block = this.blockAt(point);
       if (!block || (!AIR.has(block.name) && !LIQUID.has(block.name))) continue;
-      await this.replace(point, 'stone', { preferredReference: target });
-      return point;
+      try {
+        await this.replace(point, 'stone', { preferredReference: target, buildSupport: false });
+        return point;
+      } catch (error) {
+        this.signal.throwIfAborted();
+        if (!['RAILWAY_NO_SUPPORT', 'RAILWAY_PLACEMENT'].includes(error.code)) throw error;
+      }
     }
     throw new RailwayError(`não há espaço temporário para apoiar redstone em ${format(target)}`);
   }

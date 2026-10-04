@@ -183,7 +183,7 @@ test('troca pedra isolada por redstone usando apoio lateral temporário na água
   assert.equal([...blocks.values()].filter(block => block.name === 'stone').length, 0);
 });
 
-test('troca areia submersa por redstone usando a água acima como apoio temporário', async () => {
+test('troca areia submersa por redstone mesmo após perder a referência abaixo', async () => {
   const target = new Vec3(1, 63, 0);
   const above = target.offset(0, 1, 0);
   const below = target.offset(0, -1, 0);
