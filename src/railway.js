@@ -10,14 +10,12 @@ const BUILD_BATCH = 12;
 const SEARCH_RADIUS = 32;
 const EXTENDED_SEARCH_RADIUS = 64;
 const SEARCH_NODE_LIMIT = 12_000;
-const WALL_SCAN_DISTANCE = 20;
-const WALL_MAX_HEIGHT = 48;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
 const PLACE_RETRY_MS = 200;
 const SUPPORT_MAX_BLOCKS = 3;
 const AIR = new Set(['air', 'cave_air', 'void_air']);
-const LIQUID = new Set(['water', 'flowing_water']);
+const LIQUID = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
 const LAVA = new Set(['lava', 'flowing_lava']);
 const RAILS = new Set(['rail', 'powered_rail', 'detector_rail', 'activator_rail']);
 const FALLING_SUPPORTS = new Set(['sand', 'red_sand', 'gravel']);
@@ -44,7 +42,7 @@ const DIRECTIONS = Object.freeze([
 
 /** Busca A* respeitando rampas de um bloco e a geometria plana das curvas. */
 export function findTerrainPath({ start, goal, heightsAt, previous = null, forcedFirst = null,
-  blocked = () => false, goalDistance = 0, radius = SEARCH_RADIUS, maxNodes = SEARCH_NODE_LIMIT }) {
+  blocked = () => false, costAt = () => 0, goalDistance = 0, radius = SEARCH_RADIUS, maxNodes = SEARCH_NODE_LIMIT }) {
   start = integerPosition(start, 'início do trecho');
   goal = { ...integerPosition({ ...goal, y: goal.y ?? start.y }, 'objetivo do trecho'), y: goal.y ?? null };
   const initialDirection = previous ? directionBetween(previous, start) : null;
@@ -68,7 +66,7 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
       if (Math.max(Math.abs(x - start.x), Math.abs(z - start.z)) > radius) continue;
       if (blocked(x, z)) continue;
       if (current.parent === null && forcedFirst && (x !== forcedFirst.x || z !== forcedFirst.z)) continue;
-      const heights = heightsAt(x, z, current.y);
+      const heights = heightsAt(x, z, current.y, current);
       for (const y of heights) {
         if (!Number.isInteger(y) || Math.abs(y - current.y) > 1) continue;
         if (current.parent === null && forcedFirst && Number.isInteger(forcedFirst.y) && y !== forcedFirst.y) continue;
@@ -76,7 +74,7 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
         const turning = current.direction && current.direction !== direction.name;
         if (turning && (current.slope !== 0 || slope !== 0)) continue;
         if (current.slope !== 0 && slope !== 0 && current.slope !== slope) continue;
-        const g = current.g + 1 + Math.abs(slope) * 0.75 + (turning ? 0.2 : 0);
+        const g = current.g + 1 + Math.abs(slope) * 0.75 + (turning ? 0.2 : 0) + costAt(x, y, z);
         const next = { x, y, z, direction: direction.name, slope, g, parent: current };
         const key = stateKey(next);
         if (g >= (best.get(key) ?? Infinity)) continue;
@@ -88,33 +86,6 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
   throw new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco', 'RAILWAY_NO_ROUTE');
 }
 
-/** Escolhe o próximo bloco de uma ponte/túnel plano quando o terreno não oferece rota. */
-export function stoneFallbackStep({ current, end, previous = null, forcedFirst = null }) {
-  if (horizontalDistance(current, end) === 0) {
-    throw new RailwayError('cheguei às coordenadas horizontais finais, mas a altura do destino não é alcançável');
-  }
-  let direction;
-  if (forcedFirst) {
-    direction = DIRECTIONS.find(candidate => current.x + candidate.x === forcedFirst.x && current.z + candidate.z === forcedFirst.z);
-  } else if (previous && previous.y !== current.y) {
-    direction = DIRECTIONS.find(candidate => previous.x + candidate.x === current.x && previous.z + candidate.z === current.z);
-  } else {
-    const xDistance = end.x - current.x;
-    const zDistance = end.z - current.z;
-    direction = Math.abs(xDistance) >= Math.abs(zDistance)
-      ? DIRECTIONS.find(candidate => candidate.x === Math.sign(xDistance))
-      : DIRECTIONS.find(candidate => candidate.z === Math.sign(zDistance));
-  }
-  if (!direction) throw new RailwayError('não consegui definir a direção da passagem de pedra');
-  const position = { x: current.x + direction.x, y: current.y, z: current.z + direction.z };
-  if (position.x === end.x && position.z === end.z && end.y !== null && position.y !== end.y) {
-    throw new RailwayError('a passagem plana chegou ao destino horizontal, mas a altura final é diferente');
-  }
-  const endpoint = samePosition(position, end);
-  const next = endpoint ? null : { x: position.x + direction.x, z: position.z + direction.z };
-  return { position, next };
-}
-
 export class RailwayTask {
   constructor(controller, signal) {
     this.controller = controller;
@@ -122,6 +93,8 @@ export class RailwayTask {
     this.signal = signal;
     this.allowCommands = false;
     this.completedRailColumns = new Map();
+    this.lastCompleted = null;
+    this.pendingCell = null;
   }
 
   async run(action) {
@@ -141,95 +114,84 @@ export class RailwayTask {
     let current = start;
     let previous = null;
     let forcedFirst = null;
-    let passageDirection = null;
-    let climbTargetY = null;
     let built = 0;
     let lastPowered = 0;
     const builtColumns = new Set([columnKey(start)]);
-    const firstResult = await this.buildCell({ index: 0, position: start, previous: null, powered: true });
-    if (firstResult.usedStoneSupport) passageDirection = preferredDirection(start, end)?.name ?? null;
+    this.log('inicio', { start, end, allowCommands: this.allowCommands });
+    const startedAt = Date.now();
+    try {
+      await this.buildCell({ index: 0, position: start, previous: null, powered: true });
 
-    while (!samePosition(current, end)) {
-      this.signal.throwIfAborted();
-      if (passageDirection) {
-        const direction = DIRECTIONS.find(candidate => candidate.name === passageDirection);
-        climbTargetY ??= this.highWallAhead(current, direction);
-        if (climbTargetY !== null && current.y < climbTargetY) {
-          const position = { x: current.x + direction.x, y: current.y + 1, z: current.z + direction.z };
-          const next = { x: position.x + direction.x, z: position.z + direction.z };
-          const index = ++built;
-          const endpoint = samePosition(position, end);
-          const powered = endpoint || index - lastPowered >= 2;
-          if (powered) lastPowered = index;
-          this.controller.task = `subindo parede com pedra: ${current.y + 1}/${climbTargetY}`;
-          await this.buildCell({ index, position, previous: current, powered, slope: true, corner: false, forceStone: true });
-          builtColumns.add(columnKey(position));
-          previous = current;
-          current = position;
-          forcedFirst = endpoint ? null : next;
-          if (current.y >= climbTargetY) climbTargetY = null;
-          continue;
-        }
-        climbTargetY = null;
-      }
-      const remaining = horizontalDistance(current, end);
-      const finalSegment = remaining <= PLAN_HORIZON;
-      let path;
-      try {
-        path = this.planTerrainPath({
+      while (!samePosition(current, end)) {
+        this.signal.throwIfAborted();
+        const remaining = horizontalDistance(current, end);
+        const finalSegment = remaining <= PLAN_HORIZON;
+        const planStarted = Date.now();
+        const path = this.planTerrainPath({
           start: current,
           goal: end,
           previous,
           forcedFirst,
           blocked: (x, z) => builtColumns.has(`${x},${z}`),
           goalDistance: finalSegment ? 0 : remaining - PLAN_HORIZON,
-          heightsAt: (x, z, y) => this.terrainRailHeights(x, z, y),
+          heightsAt: (x, z, y, from) => this.terrainRailHeights(x, z, y, from),
+          costAt: (x, y, z) => LIQUID.has(this.blockAt(new Vec3(x, y - 1, z))?.name) ? 2 : 0,
         });
-      } catch (error) {
-        if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
-        const fallback = stoneFallbackStep({ current, end, previous, forcedFirst });
-        const index = ++built;
-        const corner = isCorner(current, fallback.position, fallback.next);
-        const endpoint = samePosition(fallback.position, end);
-        const powered = !corner && (endpoint || index - lastPowered >= 8);
-        if (powered) lastPowered = index;
-        this.controller.task = `construindo passagem de pedra: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(fallback.position, end)}`;
-        await this.buildCell({ index, position: fallback.position, previous: current, powered, slope: false, corner, forceStone: true });
-        builtColumns.add(columnKey(fallback.position));
-        passageDirection = directionBetween(current, fallback.position);
-        previous = current;
-        current = fallback.position;
-        forcedFirst = fallback.next;
-        continue;
+        this.log('plano', {
+          from: current, to: path.at(-1), steps: path.length - 1, remaining,
+          minY: Math.min(...path.map(point => point.y)), maxY: Math.max(...path.map(point => point.y)),
+          durationMs: Date.now() - planStarted,
+        });
+        const count = Math.min(BUILD_BATCH, path.length - 1);
+        if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
+        let builtOffset = 0;
+        for (let offset = 1; offset <= count; offset++) {
+          this.signal.throwIfAborted();
+          const position = path[offset];
+          const next = path[offset + 1] ?? null;
+          const index = ++built;
+          const slope = current.y !== position.y || next?.y !== position.y;
+          const corner = isCorner(current, position, next);
+          const endpoint = samePosition(position, end);
+          const maximumGap = slope ? 3 : 8;
+          const powered = !corner && (endpoint || index - lastPowered >= maximumGap);
+          if (powered) lastPowered = index;
+          const cell = { index, position, previous: current, powered, slope, corner };
+          this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
+          await this.buildCell(cell);
+          builtColumns.add(columnKey(position));
+          previous = current;
+          current = position;
+          builtOffset = offset;
+        }
+        forcedFirst = path[builtOffset + 1] ?? null;
       }
-      const count = Math.min(BUILD_BATCH, path.length - 1);
-      if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
-      let builtOffset = 0;
-      for (let offset = 1; offset <= count; offset++) {
-        this.signal.throwIfAborted();
-        const position = path[offset];
-        const next = path[offset + 1] ?? null;
-        const index = ++built;
-        const slope = current.y !== position.y || next?.y !== position.y;
-        const corner = isCorner(current, position, next);
-        const endpoint = samePosition(position, end);
-        const maximumGap = slope ? 3 : 8;
-        const powered = !corner && (endpoint || index - lastPowered >= maximumGap);
-        if (powered) lastPowered = index;
-        const cell = { index, position, previous: current, powered, slope, corner };
-        this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
-        const result = await this.buildCell(cell);
-        builtColumns.add(columnKey(position));
-        passageDirection = result.usedStoneSupport ? directionBetween(current, position) : null;
-        previous = current;
-        current = position;
-        builtOffset = offset;
-        // Sobre piso artificial, replaneje bloco a bloco para detectar uma
-        // parede antes que o A* escolha voltar ou contorná-la.
-        if (result.usedStoneSupport) break;
-      }
-      forcedFirst = path[builtOffset + 1] ?? null;
+      this.log('concluido', { position: current, blocks: built + 1, durationMs: Date.now() - startedAt });
+    } catch (error) {
+      this.log(this.signal.aborted ? 'cancelado' : 'falha', {
+        code: error.code ?? error.name, reason: error.message, lastCompleted: this.lastCompleted,
+        pending: this.pendingCell, botPosition: this.bot.entity.position,
+        surroundings: this.pendingCell ? this.describeTerrain(this.pendingCell.position) : this.describeTerrain(current),
+      });
+      throw error;
     }
+  }
+
+  log(event, details = {}) {
+    this.controller.manager?.log?.(`[railway] ${JSON.stringify({
+      time: new Date().toISOString(), bot: this.bot.username, event, ...details,
+    })}`);
+  }
+
+  describeTerrain(position) {
+    if (!this.bot.blockAt) return [];
+    return [{ x: 0, z: 0 }, ...DIRECTIONS].map(({ x, z }) => ({
+      x: position.x + x, z: position.z + z,
+      blocks: [-2, -1, 0, 1, 2].map(offset => ({
+        y: position.y + offset,
+        name: this.blockAt(new Vec3(position.x + x, position.y + offset, position.z + z))?.name ?? 'não carregado',
+      })),
+    }));
   }
 
   planTerrainPath(options) {
@@ -237,71 +199,70 @@ export class RailwayTask {
       return findTerrainPath(options);
     } catch (error) {
       if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
-      return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: SEARCH_NODE_LIMIT * 3 });
+      this.log('ampliando_busca', { from: options.start, radius: EXTENDED_SEARCH_RADIUS, forcedFirst: options.forcedFirst });
+      try {
+        return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: SEARCH_NODE_LIMIT * 3 });
+      } catch (extendedError) {
+        if (extendedError?.code !== 'RAILWAY_NO_ROUTE') throw extendedError;
+        this.log('sem_rota', { from: options.start, surroundings: this.describeTerrain(options.start) });
+        throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; rampas precisam variar no máximo um bloco por posição`, 'RAILWAY_NO_ROUTE');
+      }
     }
   }
 
-  terrainRailHeights(x, z, currentY) {
+  terrainRailHeights(x, z, currentY, previous = null) {
     const at = y => this.blockAt(new Vec3(x, y, z));
-    const solid = block => this.isSolid(block) && !RAILS.has(block.name);
-    if (solid(at(currentY)) && this.isPassable(at(currentY + 1)) && this.hasClearance(x, z, currentY + 1)) return [currentY + 1];
-    if (this.isPassable(at(currentY)) && (solid(at(currentY - 1)) || LIQUID.has(at(currentY)?.name)
-      || LIQUID.has(at(currentY - 1)?.name)) && this.hasClearance(x, z, currentY)) return [currentY];
-    if (this.isPassable(at(currentY - 1)) && solid(at(currentY - 2)) && this.hasClearance(x, z, currentY - 1)) return [currentY - 1];
-    return [];
+    // Só existem rampas onde o próprio piso sobe/desce. Líquido serve como
+    // apoio substituível na superfície, nunca como espaço para o carrinho.
+    return [currentY - 1, currentY, currentY + 1].filter(y => {
+      const floor = at(y - 1);
+      return (this.isSolid(floor) || LIQUID.has(floor?.name))
+        && this.isPassable(at(y)) && this.hasClearance(x, z, y, previous);
+    });
   }
 
   isPassable(block) {
-    return Boolean(block && !LAVA.has(block.name)
-      && (AIR.has(block.name) || LIQUID.has(block.name) || RAILS.has(block.name) || block.boundingBox === 'empty'));
+    return Boolean(block && !LIQUID.has(block.name)
+      && (AIR.has(block.name) || RAILS.has(block.name) || block.boundingBox === 'empty'));
   }
 
-  hasClearance(x, z, y) {
+  hasClearance(x, z, y, previous = null) {
+    if (DIRECTIONS.some(direction => [0, 1, 2].some(height => {
+      const point = new Vec3(x + direction.x, y + height, z + direction.z);
+      // O piso do passo anterior já terá sido substituído antes da descida.
+      if (previous && point.x === previous.x && point.z === previous.z && point.y === previous.y - 1) return false;
+      return LAVA.has(this.blockAt(point)?.name);
+    }))) return false;
     return [0, 1, 2].every(offset => {
       const block = this.blockAt(new Vec3(x, y + offset, z));
       // canDigBlock também mede o alcance atual; durante o planejamento basta
       // excluir blocos realmente inquebráveis, pois o bot se aproximará depois.
-      return this.isPassable(block) || Boolean(block && block.diggable !== false);
+      return this.isPassable(block) || Boolean(block && !LIQUID.has(block.name) && block.diggable !== false);
     });
-  }
-
-  wallTopRailY(x, z, currentY) {
-    for (let y = currentY + 2; y <= Math.min(319, currentY + WALL_MAX_HEIGHT); y++) {
-      const support = this.blockAt(new Vec3(x, y - 1, z));
-      if (this.isSolid(support) && !RAILS.has(support.name) && this.isPassable(this.blockAt(new Vec3(x, y, z)))
-        && this.hasClearance(x, z, y)) return y;
-    }
-    return null;
-  }
-
-  highWallAhead(current, direction) {
-    if (!direction) return null;
-    for (let distance = 1; distance <= WALL_SCAN_DISTANCE; distance++) {
-      const x = current.x + direction.x * distance;
-      const z = current.z + direction.z * distance;
-      const top = this.wallTopRailY(x, z, current.y);
-      if (top !== null) return top;
-    }
-    return null;
   }
 
   async buildCell(cell) {
     const point = vec(cell.position);
+    this.pendingCell = { index: cell.index, position: cell.position, powered: cell.powered };
     this.completedRailColumns ??= new Map();
     if (cell.previous) this.completedRailColumns.set(columnKey(cell.previous), cell.previous.y);
+    this.validateFloor(point);
     await this.moveNear(point);
-    const waterOnPath = LIQUID.has(this.blockAt(point)?.name);
+    this.validateFloor(point);
     for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
 
     const support = point.offset(0, -1, 0);
     const previousSupport = cell.previous ? vec(cell.previous).offset(0, -1, 0) : null;
     const supportBlock = this.blockAt(support);
-    const missingSupport = !this.isSolid(supportBlock);
+    this.validateFloor(point);
+    const liquidSupport = LIQUID.has(supportBlock?.name);
     const unstableSupport = FALLING_SUPPORTS.has(supportBlock?.name)
       || supportBlock?.name.endsWith('_concrete_powder');
-    const usedStoneSupport = cell.forceStone || waterOnPath || missingSupport;
-    const supportItem = cell.powered ? 'redstone_block' : (usedStoneSupport || unstableSupport ? 'stone' : null);
+    const usedStoneSupport = liquidSupport || unstableSupport;
+    const supportItem = cell.powered ? 'redstone_block' : (usedStoneSupport ? 'stone' : null);
     if (supportItem && supportBlock?.name !== supportItem) {
+      this.log('trocando_piso', { position: support, from: supportBlock.name, to: supportItem,
+        reason: liquidSupport ? 'liquido' : unstableSupport ? 'gravidade' : 'alimentacao' });
       await this.ensureMaterial(supportItem);
       const existingRail = this.blockAt(point);
       // Retire o trilho antes de trocar o piso: o servidor pode destruir o
@@ -315,11 +276,27 @@ export class RailwayTask {
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
     this.completedRailColumns.set(columnKey(point), point.y);
+    this.lastCompleted = { index: cell.index, position: cell.position };
+    this.pendingCell = null;
+    this.log('bloco_concluido', { index: cell.index, position: cell.position,
+      deltaY: cell.previous ? point.y - cell.previous.y : 0, powered: cell.powered,
+      floor: this.blockAt(support)?.name, botPosition: this.bot.entity.position });
     return { usedStoneSupport };
+  }
+
+  validateFloor(point) {
+    const support = this.blockAt(point.offset(0, -1, 0));
+    if (!support || (!this.isSolid(support) && !LIQUID.has(support.name))) {
+      throw new RailwayError(`o piso em ${format(point.offset(0, -1, 0))} não oferece apoio; é necessário procurar um desvio pelo terreno`, 'RAILWAY_TERRAIN_CHANGED');
+    }
+    if (!this.isPassable(this.blockAt(point)) || !this.hasClearance(point.x, point.z, point.y)) {
+      throw new RailwayError(`o corredor em ${format(point)} está bloqueado ou contém líquido; o trilho precisa ficar acima da superfície`, 'RAILWAY_TERRAIN_CHANGED');
+    }
   }
 
   async moveNear(point) {
     if (this.bot.entity.position.distanceTo(point) <= 2.5) return;
+    this.log('aproximando', { target: point, botPosition: this.bot.entity.position });
     await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 2), this.signal);
   }
 
@@ -382,6 +359,9 @@ export class RailwayTask {
           }, this.signal);
         } catch (error) {
           this.signal.throwIfAborted();
+          this.log('repetindo_colocacao', { target: point, item, attempt,
+            observed: this.blockAt(point)?.name, reference: referenceBlock.position,
+            referenceBlock: this.blockAt(referenceBlock.position)?.name });
           await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
           if (this.blockAt(point)?.name === item) return;
           if (attempt === PLACE_ATTEMPTS) {
@@ -444,6 +424,7 @@ export class RailwayTask {
       if (this.findReference(target, previousSupport)) return;
       const path = this.findSupportConnection(target, previousSupport, excluded);
       if (!path) throw this.supportError(target, 'stone/redstone_block', previousSupport);
+      this.log('conectando_apoio', { target, previousSupport, path, attempt: attempt + 1 });
       for (const point of path) {
         try {
           await this.replace(point, 'stone', { preferredReference: previousSupport, buildSupport: false });
@@ -508,6 +489,7 @@ export class RailwayTask {
     if (!Object.hasOwn(MATERIAL_BATCH, name) || !/^[A-Za-z0-9_]{1,16}$/u.test(this.bot.username)) {
       throw new RailwayError('não posso solicitar esse material com segurança');
     }
+    this.log('repondo_material', { item: name, count: MATERIAL_BATCH[name] });
     this.bot.chat(`/give ${this.bot.username} minecraft:${name} ${MATERIAL_BATCH[name]}`);
     const deadline = Date.now() + GIVE_WAIT_MS;
     while (!this.inventoryItem(name)) {
@@ -557,14 +539,6 @@ function directionBetween(from, to) {
 function isCorner(previous, current, next) {
   if (!previous || !next) return false;
   return directionBetween(previous, current) !== directionBetween(current, next);
-}
-
-function preferredDirection(current, end) {
-  const xDistance = end.x - current.x;
-  const zDistance = end.z - current.z;
-  return Math.abs(xDistance) >= Math.abs(zDistance)
-    ? DIRECTIONS.find(candidate => candidate.x === Math.sign(xDistance))
-    : DIRECTIONS.find(candidate => candidate.z === Math.sign(zDistance));
 }
 
 function columnKey(position) { return `${position.x},${position.z}`; }

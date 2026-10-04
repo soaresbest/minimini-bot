@@ -4,10 +4,11 @@ import vec3Package from 'vec3';
 import { RailwayTask } from '../src/railway.js';
 
 const { Vec3 } = vec3Package;
-const EMPTY = new Set(['air', 'water', 'rail', 'powered_rail']);
+const LIQUIDS = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
+const EMPTY = new Set(['air', ...LIQUIDS, 'rail', 'powered_rail']);
 const FALLING = new Set(['sand', 'red_sand', 'gravel', 'white_concrete_powder']);
 
-function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = true, refusePlacement = () => false }) {
+function railwayWorld({ blocks: initialBlocks, botPosition, waterY, liquid = 'water', blockBody = true, refusePlacement = () => false }) {
   const blocks = new Map();
   const placed = [];
   const dug = [];
@@ -20,7 +21,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
 
   function block(position, name) {
     return {
-      name, position: position.clone(), type: name === 'water' ? 0 : 1,
+      name, position: position.clone(), type: LIQUIDS.has(name) ? 0 : 1,
       boundingBox: EMPTY.has(name) ? 'empty' : 'block',
       diggable: true,
     };
@@ -28,7 +29,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
   function put(position, name) { blocks.set(position.toString(), block(position, name)); }
   function get(position) {
     assert.ok([position.x, position.y, position.z].every(Number.isInteger), 'consulta de bloco usa coordenadas inteiras');
-    return blocks.get(position.toString()) ?? block(position, position.y <= waterY ? 'water' : 'air');
+    return blocks.get(position.toString()) ?? block(position, position.y <= waterY ? liquid : 'air');
   }
   for (const [position, name] of initialBlocks) put(position, name);
 
@@ -60,7 +61,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
     entity: { position: botPosition.clone(), width: 0.6, height: 1.8 },
     inventory: { items: () => items.filter(item => item.count > 0) },
     blockAt: get,
-    canDigBlock: () => true,
+    canDigBlock: current => !LIQUIDS.has(current.name),
     dig: async current => {
       assert.equal(get(current.position).name, current.name, 'mineração usa o bloco atual do mundo');
       const above = current.position.offset(0, 1, 0);
@@ -89,7 +90,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
           ? 'a referência já não é um bloco sólido'
           : actualReference.name !== reference.name
             ? 'a referência está desatualizada'
-            : !['water', 'air'].includes(get(destination).name)
+            : !['air', ...LIQUIDS].includes(get(destination).name)
               ? 'o destino está ocupado'
               : null;
       if (problem) {
@@ -149,7 +150,7 @@ for (const [slope, y] of [['subida', 65], ['descida', 63]]) {
     const world = railwayWorld({
       blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone']],
       botPosition: previous.offset(0.5, 0, 0.5),
-      waterY: 65,
+      waterY: y - 1,
     });
 
     await world.task.buildCell({ index: 1, position, previous, powered: true, slope: true });
@@ -159,7 +160,7 @@ for (const [slope, y] of [['subida', 65], ['descida', 63]]) {
   });
 }
 
-test('constrói trilho eletrificado sobre areia submersa e libera o espaço do trilho', async () => {
+test('constrói trilho eletrificado sobre areia cercada por água no nível do piso', async () => {
   const previous = new Vec3(0, 64, 0);
   const position = new Vec3(1, 64, 0);
   const support = position.offset(0, -1, 0);
@@ -171,7 +172,7 @@ test('constrói trilho eletrificado sobre areia submersa e libera o espaço do t
       [support.offset(0, 0, 1), 'sand'], [support.offset(0, 0, -1), 'sand'],
     ],
     botPosition: previous.offset(0.5, 0, 0.5),
-    waterY: 64,
+    waterY: 63,
   });
 
   await world.task.buildCell({ index: 1, position, previous, powered: true });
@@ -187,7 +188,7 @@ test('procura outro apoio quando o servidor recusa a primeira ligação de pedra
   const world = railwayWorld({
     blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone']],
     botPosition: previous.offset(0.5, 0, 0.5),
-    waterY: 65,
+    waterY: 64,
     refusePlacement: point => point.equals(refused),
   });
 
@@ -205,7 +206,7 @@ test('falta de pedra para ligar o apoio interrompe a obra e preserva a ferrovia 
   const world = railwayWorld({
     blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone']],
     botPosition: previous.offset(0.5, 0, 0.5),
-    waterY: 65,
+    waterY: 64,
   });
   world.items.find(item => item.name === 'stone').count = 0;
 
@@ -228,7 +229,7 @@ test('confere estoque de redstone antes de escavar o piso submerso', async () =>
   const world = railwayWorld({
     blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone'], [support, 'sand']],
     botPosition: previous.offset(0.5, 0, 0.5),
-    waterY: 64,
+    waterY: 63,
   });
   world.items.find(item => item.name === 'redstone_block').count = 0;
 
@@ -242,6 +243,81 @@ test('confere estoque de redstone antes de escavar o piso submerso', async () =>
   assert.deepEqual(world.dug, []);
   assert.deepEqual(world.placed, []);
 });
+
+for (const material of ['grass_block', 'dirt', 'stone']) {
+  test(`preserva o piso natural de ${material} ao instalar trilho comum`, async () => {
+    const previous = new Vec3(0, 64, 0);
+    const position = new Vec3(1, 64, 0);
+    const support = position.offset(0, -1, 0);
+    const world = railwayWorld({
+      blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone'], [support, material]],
+      botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
+    });
+
+    await world.task.buildCell({ index: 1, position, previous, powered: false });
+
+    assert.equal(world.get(support).name, material);
+    assert.equal(world.get(position).name, 'rail');
+    assert.deepEqual(world.dug, []);
+    assert.deepEqual(world.placed.map(entry => entry.name), ['rail']);
+  });
+}
+
+for (const liquid of LIQUIDS) {
+  test(`substitui o piso de ${liquid} por pedra e mantém o trilho fora do líquido`, async () => {
+    const previous = new Vec3(0, 64, 0);
+    const position = new Vec3(1, 64, 0);
+    const support = position.offset(0, -1, 0);
+    const world = railwayWorld({
+      blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone']],
+      botPosition: previous.offset(0.5, 0, 0.5), waterY: 63, liquid,
+    });
+
+    await world.task.buildCell({ index: 1, position, previous, powered: false });
+
+    assert.equal(world.get(support).name, 'stone');
+    assert.equal(world.get(position).name, 'rail');
+    assert.equal(world.get(position.offset(0, 1, 0)).name, 'air');
+    assert.deepEqual(world.dug, [], 'líquidos são deslocados pelo bloco, sem tentativa de mineração');
+    assert.deepEqual(world.invalidPlacements, []);
+  });
+}
+
+test('recusa piso vazio antes de construir uma ponte artificial', async () => {
+  const previous = new Vec3(0, 64, 0);
+  const position = new Vec3(1, 64, 0);
+  const world = railwayWorld({
+    blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone']],
+    botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
+  });
+
+  await assert.rejects(world.task.buildCell({ index: 1, position, previous, powered: false }),
+    error => error.code === 'RAILWAY_TERRAIN_CHANGED');
+
+  assert.deepEqual(world.dug, []);
+  assert.deepEqual(world.placed, []);
+  assert.equal(world.get(previous).name, 'rail');
+});
+
+for (const offset of [0, 1, 2]) {
+  test(`recusa lava no corredor à altura ${offset} sem escavar o piso`, async () => {
+    const previous = new Vec3(0, 64, 0);
+    const position = new Vec3(1, 64, 0);
+    const support = position.offset(0, -1, 0);
+    const world = railwayWorld({
+      blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone'],
+        [support, 'stone'], [position.offset(0, offset, 0), 'lava']],
+      botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
+    });
+
+    await assert.rejects(world.task.buildCell({ index: 1, position, previous, powered: true }),
+      error => error.code === 'RAILWAY_TERRAIN_CHANGED');
+
+    assert.deepEqual(world.dug, []);
+    assert.deepEqual(world.placed, []);
+    assert.equal(world.get(support).name, 'stone');
+  });
+}
 
 for (const material of FALLING) {
   test(`estabiliza ${material} suspenso antes do trilho comum para resistir às atualizações de gravidade`, async () => {
