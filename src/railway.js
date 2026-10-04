@@ -10,6 +10,8 @@ const BUILD_BATCH = 12;
 const SEARCH_RADIUS = 32;
 const EXTENDED_SEARCH_RADIUS = 64;
 const SEARCH_NODE_LIMIT = 12_000;
+const WALL_SCAN_DISTANCE = 20;
+const WALL_MAX_HEIGHT = 48;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
 const PLACE_RETRY_MS = 200;
@@ -40,7 +42,7 @@ const DIRECTIONS = Object.freeze([
 
 /** Busca A* respeitando rampas de um bloco e a geometria plana das curvas. */
 export function findTerrainPath({ start, goal, heightsAt, previous = null, forcedFirst = null,
-  goalDistance = 0, radius = SEARCH_RADIUS, maxNodes = SEARCH_NODE_LIMIT }) {
+  blocked = () => false, goalDistance = 0, radius = SEARCH_RADIUS, maxNodes = SEARCH_NODE_LIMIT }) {
   start = integerPosition(start, 'início do trecho');
   goal = { ...integerPosition({ ...goal, y: goal.y ?? start.y }, 'objetivo do trecho'), y: goal.y ?? null };
   const initialDirection = previous ? directionBetween(previous, start) : null;
@@ -62,6 +64,7 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
       const x = current.x + direction.x;
       const z = current.z + direction.z;
       if (Math.max(Math.abs(x - start.x), Math.abs(z - start.z)) > radius) continue;
+      if (blocked(x, z)) continue;
       if (current.parent === null && forcedFirst && (x !== forcedFirst.x || z !== forcedFirst.z)) continue;
       const heights = heightsAt(x, z, current.y);
       for (const y of heights) {
@@ -127,12 +130,37 @@ export class RailwayTask {
     let current = start;
     let previous = null;
     let forcedFirst = null;
+    let passageDirection = null;
+    let climbTargetY = null;
     let built = 0;
     let lastPowered = 0;
-    await this.buildCell({ index: 0, position: start, powered: true });
+    const builtColumns = new Set([columnKey(start)]);
+    const firstResult = await this.buildCell({ index: 0, position: start, powered: true });
+    if (firstResult.usedStoneSupport) passageDirection = preferredDirection(start, end)?.name ?? null;
 
     while (!samePosition(current, end)) {
       this.signal.throwIfAborted();
+      if (passageDirection) {
+        const direction = DIRECTIONS.find(candidate => candidate.name === passageDirection);
+        climbTargetY ??= this.highWallAhead(current, direction);
+        if (climbTargetY !== null && current.y < climbTargetY) {
+          const position = { x: current.x + direction.x, y: current.y + 1, z: current.z + direction.z };
+          const next = { x: position.x + direction.x, z: position.z + direction.z };
+          const index = ++built;
+          const endpoint = samePosition(position, end);
+          const powered = endpoint || index - lastPowered >= 2;
+          if (powered) lastPowered = index;
+          this.controller.task = `subindo parede com pedra: ${current.y + 1}/${climbTargetY}`;
+          await this.buildCell({ index, position, powered, slope: true, corner: false, forceStone: true });
+          builtColumns.add(columnKey(position));
+          previous = current;
+          current = position;
+          forcedFirst = endpoint ? null : next;
+          if (current.y >= climbTargetY) climbTargetY = null;
+          continue;
+        }
+        climbTargetY = null;
+      }
       const remaining = horizontalDistance(current, end);
       const finalSegment = remaining <= PLAN_HORIZON;
       let path;
@@ -142,6 +170,7 @@ export class RailwayTask {
           goal: end,
           previous,
           forcedFirst,
+          blocked: (x, z) => builtColumns.has(`${x},${z}`),
           goalDistance: finalSegment ? 0 : remaining - PLAN_HORIZON,
           heightsAt: (x, z, y) => this.terrainRailHeights(x, z, y),
         });
@@ -155,6 +184,8 @@ export class RailwayTask {
         if (powered) lastPowered = index;
         this.controller.task = `construindo passagem de pedra: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(fallback.position, end)}`;
         await this.buildCell({ index, position: fallback.position, powered, slope: false, corner, forceStone: true });
+        builtColumns.add(columnKey(fallback.position));
+        passageDirection = directionBetween(current, fallback.position);
         previous = current;
         current = fallback.position;
         forcedFirst = fallback.next;
@@ -162,6 +193,7 @@ export class RailwayTask {
       }
       const count = Math.min(BUILD_BATCH, path.length - 1);
       if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
+      let builtOffset = 0;
       for (let offset = 1; offset <= count; offset++) {
         this.signal.throwIfAborted();
         const position = path[offset];
@@ -175,11 +207,17 @@ export class RailwayTask {
         if (powered) lastPowered = index;
         const cell = { index, position, powered, slope, corner };
         this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
-        await this.buildCell(cell);
+        const result = await this.buildCell(cell);
+        builtColumns.add(columnKey(position));
+        passageDirection = result.usedStoneSupport ? directionBetween(current, position) : null;
         previous = current;
         current = position;
+        builtOffset = offset;
+        // Sobre piso artificial, replaneje bloco a bloco para detectar uma
+        // parede antes que o A* escolha voltar ou contorná-la.
+        if (result.usedStoneSupport) break;
       }
-      forcedFirst = path[count + 1] ?? null;
+      forcedFirst = path[builtOffset + 1] ?? null;
     }
   }
 
@@ -194,20 +232,46 @@ export class RailwayTask {
 
   terrainRailHeights(x, z, currentY) {
     const at = y => this.blockAt(new Vec3(x, y, z));
-    const passable = block => Boolean(block && !LAVA.has(block.name)
-      && (AIR.has(block.name) || LIQUID.has(block.name) || RAILS.has(block.name) || block.boundingBox === 'empty'));
     const solid = block => this.isSolid(block) && !RAILS.has(block.name);
-    const clearance = y => [0, 1, 2].every(offset => {
-      const block = at(y + offset);
+    if (solid(at(currentY)) && this.isPassable(at(currentY + 1)) && this.hasClearance(x, z, currentY + 1)) return [currentY + 1];
+    if (this.isPassable(at(currentY)) && (solid(at(currentY - 1)) || LIQUID.has(at(currentY)?.name)
+      || LIQUID.has(at(currentY - 1)?.name)) && this.hasClearance(x, z, currentY)) return [currentY];
+    if (this.isPassable(at(currentY - 1)) && solid(at(currentY - 2)) && this.hasClearance(x, z, currentY - 1)) return [currentY - 1];
+    return [];
+  }
+
+  isPassable(block) {
+    return Boolean(block && !LAVA.has(block.name)
+      && (AIR.has(block.name) || LIQUID.has(block.name) || RAILS.has(block.name) || block.boundingBox === 'empty'));
+  }
+
+  hasClearance(x, z, y) {
+    return [0, 1, 2].every(offset => {
+      const block = this.blockAt(new Vec3(x, y + offset, z));
       // canDigBlock também mede o alcance atual; durante o planejamento basta
       // excluir blocos realmente inquebráveis, pois o bot se aproximará depois.
-      return passable(block) || Boolean(block && block.diggable !== false);
+      return this.isPassable(block) || Boolean(block && block.diggable !== false);
     });
-    if (solid(at(currentY)) && passable(at(currentY + 1)) && clearance(currentY + 1)) return [currentY + 1];
-    if (passable(at(currentY)) && (solid(at(currentY - 1)) || LIQUID.has(at(currentY)?.name)
-      || LIQUID.has(at(currentY - 1)?.name)) && clearance(currentY)) return [currentY];
-    if (passable(at(currentY - 1)) && solid(at(currentY - 2)) && clearance(currentY - 1)) return [currentY - 1];
-    return [];
+  }
+
+  wallTopRailY(x, z, currentY) {
+    for (let y = currentY + 2; y <= Math.min(319, currentY + WALL_MAX_HEIGHT); y++) {
+      const support = this.blockAt(new Vec3(x, y - 1, z));
+      if (this.isSolid(support) && !RAILS.has(support.name) && this.isPassable(this.blockAt(new Vec3(x, y, z)))
+        && this.hasClearance(x, z, y)) return y;
+    }
+    return null;
+  }
+
+  highWallAhead(current, direction) {
+    if (!direction) return null;
+    for (let distance = 1; distance <= WALL_SCAN_DISTANCE; distance++) {
+      const x = current.x + direction.x * distance;
+      const z = current.z + direction.z * distance;
+      const top = this.wallTopRailY(x, z, current.y);
+      if (top !== null) return top;
+    }
+    return null;
   }
 
   async buildCell(cell) {
@@ -217,13 +281,16 @@ export class RailwayTask {
     for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
 
     const support = point.offset(0, -1, 0);
+    const missingSupport = !this.isSolid(this.blockAt(support));
+    const usedStoneSupport = cell.forceStone || waterOnPath || missingSupport;
     if (cell.powered) {
       await this.replace(support, 'redstone_block');
-    } else if (cell.forceStone || waterOnPath || !this.isSolid(this.blockAt(support))) {
+    } else if (usedStoneSupport) {
       await this.replace(support, 'stone');
     }
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
+    return { usedStoneSupport };
   }
 
   async moveNear(point) {
@@ -359,6 +426,15 @@ function isCorner(previous, current, next) {
   return directionBetween(previous, current) !== directionBetween(current, next);
 }
 
+function preferredDirection(current, end) {
+  const xDistance = end.x - current.x;
+  const zDistance = end.z - current.z;
+  return Math.abs(xDistance) >= Math.abs(zDistance)
+    ? DIRECTIONS.find(candidate => candidate.x === Math.sign(xDistance))
+    : DIRECTIONS.find(candidate => candidate.z === Math.sign(zDistance));
+}
+
+function columnKey(position) { return `${position.x},${position.z}`; }
 function samePosition(a, b) { return a.x === b.x && a.z === b.z && (a.y === b.y || a.y === null || b.y === null); }
 function horizontalDistance(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.z - b.z); }
 

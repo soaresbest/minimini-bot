@@ -85,6 +85,28 @@ test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () =
   assert.deepEqual(task.terrainRailHeights(4, 0, 64), []);
 });
 
+test('detecta o topo de uma parede alta adiante da passagem', () => {
+  const bot = {
+    blockAt: ({ x, y, z }) => {
+      const wall = x === 3 && z === 0 && y <= 69;
+      return { name: wall ? 'stone' : 'air', boundingBox: wall ? 'block' : 'empty', diggable: true, position: new Vec3(x, y, z) };
+    },
+  };
+  const task = new RailwayTask({ bot }, new AbortController().signal);
+  assert.equal(task.wallTopRailY(3, 0, 64), 70);
+  assert.equal(task.highWallAhead({ x: 0, y: 64, z: 0 }, { x: 1, z: 0 }), 70);
+});
+
+test('A* não reutiliza colunas de trilhos já construídas', () => {
+  const path = findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 3, y: 64, z: 0 },
+    heightsAt: (_x, _z, currentY) => [currentY],
+    blocked: (x, z) => x === 1 && z === 0,
+  });
+  assert.ok(!path.some(point => point.x === 1 && point.z === 0));
+  assert.ok(path.some(point => point.z !== 0));
+});
+
 test('reposição por comando é opt-in e usa somente comando e material fixos', async () => {
   const items = [];
   const sent = [];
