@@ -131,6 +131,23 @@ test('reposição por comando é opt-in e usa somente comando e material fixos',
   assert.equal(sent.length, 1);
 });
 
+test('trilho eletrificado cria apoio de pedra quando a redstone não tem apoio', async () => {
+  const support = new Vec3(10, 63, 20);
+  const placed = [];
+  const task = new RailwayTask({ bot: {
+    blockAt: () => ({ name: 'air', boundingBox: 'empty' }),
+  } }, new AbortController().signal);
+  task.findReference = () => null;
+  task.replace = async (point, item) => placed.push({ point: point.toString(), item });
+
+  await task.preparePoweredSupport(support);
+
+  assert.deepEqual(placed, [
+    { point: new Vec3(10, 62, 20).toString(), item: 'stone' },
+    { point: support.toString(), item: 'redstone_block' },
+  ]);
+});
+
 test('colocação relê o mundo e repete uma recusa transitória do servidor', async () => {
   const target = new Vec3(0, 64, 0);
   const support = new Vec3(0, 63, 0);

@@ -292,13 +292,19 @@ export class RailwayTask {
     const missingSupport = !this.isSolid(this.blockAt(support));
     const usedStoneSupport = cell.forceStone || waterOnPath || missingSupport;
     if (cell.powered) {
-      await this.replace(support, 'redstone_block');
+      await this.preparePoweredSupport(support);
     } else if (usedStoneSupport) {
       await this.replace(support, 'stone');
     }
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
     return { usedStoneSupport };
+  }
+
+  async preparePoweredSupport(support) {
+    if (this.blockAt(support)?.name === 'redstone_block') return;
+    if (!this.findReference(support)) await this.replace(support.offset(0, -1, 0), 'stone');
+    await this.replace(support, 'redstone_block');
   }
 
   async moveNear(point) {
