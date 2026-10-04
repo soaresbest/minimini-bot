@@ -50,7 +50,7 @@ test('A* acompanha terreno plano e rampas de um bloco', () => {
   ]);
 });
 
-test('A* contorna degrau de dois blocos e mantém a curva plana', () => {
+test('A* contorna degrau de dois blocos sem colocar curvas na parte inclinada do trilho', () => {
   const path = findTerrainPath({
     start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 64, z: 0 },
     heightsAt: (x, z, currentY) => {
@@ -65,8 +65,49 @@ test('A* contorna degrau de dois blocos e mantém a curva plana', () => {
     const current = path[index];
     const after = path[index + 1];
     const turn = before.x - current.x !== current.x - after.x || before.z - current.z !== current.z - after.z;
-    if (turn) assert.equal(before.y, after.y);
+    if (turn) {
+      assert.ok(before.y <= current.y, 'a curva não pode ser a parte baixa da rampa de chegada');
+      assert.ok(after.y <= current.y, 'a curva não pode ser a parte baixa da rampa de saída');
+    }
   }
+});
+
+for (const { description, previousY, nextY, allowed } of [
+  { description: 'permite curva no topo depois de subir', previousY: 63, nextY: 64, allowed: true },
+  { description: 'permite curva no topo antes de descer', previousY: 64, nextY: 63, allowed: true },
+  { description: 'recusa curva na parte baixa depois de descer', previousY: 65, nextY: 64, allowed: false },
+  { description: 'recusa curva na parte baixa antes de subir', previousY: 64, nextY: 65, allowed: false },
+]) {
+  test(`A* ${description}`, () => {
+    const start = { x: 0, y: 64, z: 0 };
+    const goal = { x: 0, y: nextY, z: 1 };
+    const find = () => findTerrainPath({
+      start, previous: { x: -1, y: previousY, z: 0 }, goal,
+      heightsAt: (x, z) => x === goal.x && z === goal.z ? [goal.y] : [],
+    });
+
+    if (allowed) assert.deepEqual(find(), [start, goal]);
+    else assert.throws(find, error => error.code === 'RAILWAY_NO_ROUTE');
+  });
+}
+
+test('A* permite topo com trilho plano entre duas rampas inferiores', () => {
+  const start = { x: 0, y: 64, z: 0 };
+  const goal = { x: 1, y: 63, z: 0 };
+  const path = findTerrainPath({
+    start, previous: { x: -1, y: 63, z: 0 }, goal,
+    heightsAt: (x, z) => x === goal.x && z === goal.z ? [goal.y] : [],
+  });
+
+  assert.deepEqual(path, [start, goal]);
+});
+
+test('A* recusa vale em que o mesmo trilho precisaria subir nas duas direções', () => {
+  const goal = { x: 1, y: 65, z: 0 };
+  assert.throws(() => findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, previous: { x: -1, y: 65, z: 0 }, goal,
+    heightsAt: (x, z) => x === goal.x && z === goal.z ? [goal.y] : [],
+  }), error => error.code === 'RAILWAY_NO_ROUTE');
 });
 
 test('A* escolhe uma rampa alternativa sem voltar à mesma coluna para mudar a orientação', () => {
@@ -84,16 +125,16 @@ test('A* escolhe uma rampa alternativa sem voltar à mesma coluna para mudar a o
   // artificialmente. A ferrovia precisa alcançar o topo pela outra rampa.
   assert.equal(new Set(path.map(({ x, z }) => `${x},${z}`)).size, path.length);
   assert.deepEqual(path, [
-    { x: 0, y: 64, z: 0 }, { x: 1, y: 64, z: 0 }, { x: 2, y: 65, z: 0 }, { x: 3, y: 65, z: 0 },
-    { x: 3, y: 65, z: -1 }, { x: 2, y: 65, z: -1 }, { x: 1, y: 65, z: -1 }, { x: 0, y: 65, z: -1 },
+    { x: 0, y: 64, z: 0 }, { x: 1, y: 64, z: 0 }, { x: 2, y: 65, z: 0 },
+    { x: 2, y: 65, z: -1 }, { x: 1, y: 65, z: -1 }, { x: 0, y: 65, z: -1 },
   ]);
   const whole = [previous, ...path];
   for (let index = 1; index < whole.length - 1; index++) {
     const [before, current, after] = whole.slice(index - 1, index + 2);
     const turns = current.x - before.x !== after.x - current.x || current.z - before.z !== after.z - current.z;
     if (turns) {
-      assert.equal(before.y, current.y, 'não inicia curva em um trilho inclinado');
-      assert.equal(after.y, current.y, 'não inicia subida durante uma curva');
+      assert.ok(before.y <= current.y, 'a curva não pode ser a parte baixa da rampa de chegada');
+      assert.ok(after.y <= current.y, 'a curva não pode ser a parte baixa da rampa de saída');
     }
   }
 });
@@ -174,6 +215,25 @@ test('replaneja um percurso longo mantendo as descidas naturais e o desvio no ch
   assert.ok(built.some(({ position: { z } }) => Math.abs(z) === 2));
   assert.equal(new Set(built.map(cell => `${cell.position.x},${cell.position.z}`)).size, built.length,
     'replanejar não retorna aos trilhos já feitos');
+});
+
+test('planeja o desvio antes de ultrapassar a bifurcação de um corredor sem saída', async () => {
+  const { task, built } = terrainRun(({ x, y, z }) => {
+    const corridor = z === 0 && x >= 0 && x <= 20;
+    const fork = x === 5 && z >= 0 && z <= 3;
+    const bypass = z === 3 && x >= 5 && x <= 50;
+    const arrival = x === 50 && z >= 0 && z <= 3;
+    return y <= (corridor || fork || bypass || arrival ? 63 : 50) ? 'stone' : 'air';
+  });
+
+  await runTo(task, { x: 50, z: 0 });
+
+  assert.deepEqual(built.at(-1).position, { x: 50, y: 64, z: 0 });
+  assert.ok(built.some(({ position: { x, z } }) => x === 5 && z === 1), 'usa a bifurcação antes do beco sem saída');
+  assert.ok(!built.some(({ position: { x, z } }) => x > 5 && x <= 20 && z === 0),
+    'não constrói além da bifurcação para depois precisar voltar');
+  assert.equal(new Set(built.map(cell => `${cell.position.x},${cell.position.z}`)).size, built.length,
+    'o desvio chega ao fim sem reutilizar colunas');
 });
 
 test('coordenadas automáticas usam a posição atual e aceitam qualquer Y no destino', async () => {

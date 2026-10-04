@@ -5,10 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
 
-const PLAN_HORIZON = 20;
+const PLAN_HORIZON = 40;
 const BUILD_BATCH = 12;
-const SEARCH_RADIUS = 32;
-const EXTENDED_SEARCH_RADIUS = 64;
+const SEARCH_RADIUS = 64;
+const EXTENDED_SEARCH_RADIUS = 96;
 const SEARCH_NODE_LIMIT = 12_000;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
@@ -78,8 +78,10 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
         if (current.parent === null && forcedFirst && Number.isInteger(forcedFirst.y) && y !== forcedFirst.y) continue;
         const slope = y - current.y;
         const turning = current.direction && current.direction !== direction.name;
-        if (turning && (current.slope !== 0 || slope !== 0)) continue;
-        if (current.slope !== 0 && slope !== 0 && current.slope !== slope) continue;
+        // A rampa ocupa o bloco INFERIOR. No topo, o trilho atual pode ser
+        // plano e curvar: são os vizinhos mais baixos que ficam inclinados.
+        if (turning && (current.slope < 0 || slope > 0)) continue;
+        if (current.slope < 0 && slope > 0) continue;
         const g = current.g + 1 + Math.abs(slope) * 0.75 + (turning ? 0.2 : 0) + costAt(x, y, z);
         const next = { x, y, z, direction: direction.name, slope, g, parent: current };
         const key = stateKey(next);
@@ -146,7 +148,7 @@ export class RailwayTask {
         this.log('plano', {
           from: current, to: path.at(-1), steps: path.length - 1, remaining,
           minY: Math.min(...path.map(point => point.y)), maxY: Math.max(...path.map(point => point.y)),
-          durationMs: Date.now() - planStarted,
+          durationMs: Date.now() - planStarted, path,
         });
         const count = Math.min(BUILD_BATCH, path.length - 1);
         if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
