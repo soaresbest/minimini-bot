@@ -66,7 +66,7 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
       const heights = heightsAt(x, z, current.y);
       for (const y of heights) {
         if (!Number.isInteger(y) || Math.abs(y - current.y) > 1) continue;
-        if (current.parent === null && forcedFirst && y !== forcedFirst.y) continue;
+        if (current.parent === null && forcedFirst && Number.isInteger(forcedFirst.y) && y !== forcedFirst.y) continue;
         const slope = y - current.y;
         const turning = current.direction && current.direction !== direction.name;
         if (turning && (current.slope !== 0 || slope !== 0)) continue;
@@ -80,7 +80,34 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
       }
     }
   }
-  throw new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco');
+  throw new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco', 'RAILWAY_NO_ROUTE');
+}
+
+/** Escolhe o próximo bloco de uma ponte/túnel plano quando o terreno não oferece rota. */
+export function stoneFallbackStep({ current, end, previous = null, forcedFirst = null }) {
+  if (horizontalDistance(current, end) === 0) {
+    throw new RailwayError('cheguei às coordenadas horizontais finais, mas a altura do destino não é alcançável');
+  }
+  let direction;
+  if (forcedFirst) {
+    direction = DIRECTIONS.find(candidate => current.x + candidate.x === forcedFirst.x && current.z + candidate.z === forcedFirst.z);
+  } else if (previous && previous.y !== current.y) {
+    direction = DIRECTIONS.find(candidate => previous.x + candidate.x === current.x && previous.z + candidate.z === current.z);
+  } else {
+    const xDistance = end.x - current.x;
+    const zDistance = end.z - current.z;
+    direction = Math.abs(xDistance) >= Math.abs(zDistance)
+      ? DIRECTIONS.find(candidate => candidate.x === Math.sign(xDistance))
+      : DIRECTIONS.find(candidate => candidate.z === Math.sign(zDistance));
+  }
+  if (!direction) throw new RailwayError('não consegui definir a direção da passagem de pedra');
+  const position = { x: current.x + direction.x, y: current.y, z: current.z + direction.z };
+  if (position.x === end.x && position.z === end.z && position.y !== end.y) {
+    throw new RailwayError('a passagem plana chegou ao destino horizontal, mas a altura final é diferente');
+  }
+  const endpoint = samePosition(position, end);
+  const next = endpoint ? null : { x: position.x + direction.x, z: position.z + direction.z };
+  return { position, next };
 }
 
 export class RailwayTask {
@@ -106,14 +133,31 @@ export class RailwayTask {
       this.signal.throwIfAborted();
       const remaining = horizontalDistance(current, end);
       const finalSegment = remaining <= PLAN_HORIZON;
-      const path = this.planTerrainPath({
-        start: current,
-        goal: end,
-        previous,
-        forcedFirst,
-        goalDistance: finalSegment ? 0 : remaining - PLAN_HORIZON,
-        heightsAt: (x, z, y) => this.terrainRailHeights(x, z, y),
-      });
+      let path;
+      try {
+        path = this.planTerrainPath({
+          start: current,
+          goal: end,
+          previous,
+          forcedFirst,
+          goalDistance: finalSegment ? 0 : remaining - PLAN_HORIZON,
+          heightsAt: (x, z, y) => this.terrainRailHeights(x, z, y),
+        });
+      } catch (error) {
+        if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
+        const fallback = stoneFallbackStep({ current, end, previous, forcedFirst });
+        const index = ++built;
+        const corner = isCorner(current, fallback.position, fallback.next);
+        const endpoint = samePosition(fallback.position, end);
+        const powered = !corner && (endpoint || index - lastPowered >= 8);
+        if (powered) lastPowered = index;
+        this.controller.task = `construindo passagem de pedra: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(fallback.position, end)}`;
+        await this.buildCell({ index, position: fallback.position, powered, slope: false, corner, forceStone: true });
+        previous = current;
+        current = fallback.position;
+        forcedFirst = fallback.next;
+        continue;
+      }
       const count = Math.min(BUILD_BATCH, path.length - 1);
       if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
       for (let offset = 1; offset <= count; offset++) {
@@ -141,7 +185,7 @@ export class RailwayTask {
     try {
       return findTerrainPath(options);
     } catch (error) {
-      if (!(error instanceof RailwayError)) throw error;
+      if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
       return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: SEARCH_NODE_LIMIT * 3 });
     }
   }
@@ -173,7 +217,7 @@ export class RailwayTask {
     const support = point.offset(0, -1, 0);
     if (cell.powered) {
       await this.replace(support, 'redstone_block');
-    } else if (waterOnPath || !this.isSolid(this.blockAt(support))) {
+    } else if (cell.forceStone || waterOnPath || !this.isSolid(this.blockAt(support))) {
       await this.replace(support, 'stone');
     }
 

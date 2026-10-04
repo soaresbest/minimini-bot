@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vec3Package from 'vec3';
-import { RailwayError, RailwayTask, findTerrainPath } from '../src/railway.js';
+import { RailwayError, RailwayTask, findTerrainPath, stoneFallbackStep } from '../src/railway.js';
 
 const { Vec3 } = vec3Package;
 
@@ -43,7 +43,21 @@ test('A* informa quando não há alternativa dentro da área pesquisada', () => 
   assert.throws(() => findTerrainPath({
     start: { x: 0, y: 64, z: 0 }, goal: { x: 3, y: 64, z: 0 }, radius: 2,
     heightsAt: (x, _z, currentY) => x === 1 ? [] : [currentY],
-  }), RailwayError);
+  }), error => error instanceof RailwayError && error.code === 'RAILWAY_NO_ROUTE');
+});
+
+test('fallback cria passagem plana de pedra na direção do destino', () => {
+  assert.deepEqual(stoneFallbackStep({ current: { x: 0, y: 64, z: 0 }, end: { x: 5, y: 64, z: 2 } }), {
+    position: { x: 1, y: 64, z: 0 }, next: { x: 2, z: 0 },
+  });
+  assert.deepEqual(stoneFallbackStep({
+    current: { x: 1, y: 65, z: 0 }, previous: { x: 0, y: 64, z: 0 }, end: { x: 1, y: 65, z: 5 },
+  }), {
+    position: { x: 2, y: 65, z: 0 }, next: { x: 3, z: 0 },
+  });
+  assert.deepEqual(stoneFallbackStep({
+    current: { x: 2, y: 64, z: 0 }, end: { x: 5, y: 64, z: 0 }, forcedFirst: { x: 2, y: 64, z: 1 },
+  }).position, { x: 2, y: 64, z: 1 });
 });
 
 test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () => {
