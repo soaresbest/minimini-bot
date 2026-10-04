@@ -33,6 +33,8 @@ Somente mensagens com uma menção completa, como `@bot1`, ativam o bot. Os nome
 | `@bot1 goto(100,60,300)` | Caminha até perto da posição indicada. |
 | `@bot1 follow(Steve)` | Valida se Steve está conectado e começa a segui-lo. |
 | `@bot1 guard(Steve)` | Segue e protege Steve, equipando uma arma disponível. |
+| `@bot1 railway(0,64,0,100,70,0,false)` | Constrói trilhos entre as duas posições usando apenas o inventário. |
+| `@bot1 railway(0,64,0,100,70,0,true)` | Faz a mesma obra e pode usar `/give` para repor os blocos permitidos. |
 | `@bot1 stop` | Cancela o pedido de IA e a tarefa atual, parando no local. |
 | `@bot1 status` | Informa vida, fome, tarefa, modo e inventário. |
 | `@bot1 help` | Mostra os comandos. |
@@ -44,6 +46,10 @@ O bot confirma o recebimento, mas só informa seu estado completo quando recebe 
 Em servidores com plugin de autenticação, `server.registration: true` faz cada bot gerar uma senha aleatória de 8 dígitos na primeira conexão. A senha é salva por servidor e nome do bot em `~/.minimini-bot/config.json` antes do envio de `/register senha senha`; nas reconexões, o bot reutiliza a mesma senha com `/login senha`. A senha nunca aparece nos logs nem nas respostas normais do bot. Desative essa opção em servidores sem `/register`.
 
 `goto` usa caminhos sem quebrar ou colocar blocos automaticamente. Destinos impossíveis ou demorados geram uma resposta de falha. `follow` e `guard` são contínuos: um jogador conectado fora da distância de renderização será aguardado; se ele desconectar, o bot para. Esses comandos não teleportam entre dimensões.
+
+`railway(x1,y1,z1,x2,y2,z2,permissão)` (ou o alias `trilhos`) recebe coordenadas inteiras dos blocos de trilho. A permissão pode ser `true`/`comandos` para autorizar `/give`, ou `false`/`inventario` para proibir comandos. Sem essa permissão, a tarefa para e avisa no chat assim que faltar `rail`, `powered_rail`, `redstone_block` ou `stone`. Com permissão, somente esses quatro identificadores fixos podem ser solicitados; o bot precisa ter autorização do servidor para `/give`.
+
+A ferrovia começa com trilho eletrificado sobre bloco de redstone. O planejamento ocorre em trechos de 24 blocos para suportar distâncias grandes, mantém curvas planas e inclinação máxima de um bloco por avanço, abre três blocos de altura e recalcula a distribuição de impulso a cada trecho. Em piso plano, há no máximo oito posições entre pontos de alimentação; perto de rampas, no máximo três. Todo trilho eletrificado fica sobre um bloco de redstone, e trechos com água recebem apoio de pedra. `stop` cancela a construção. As coordenadas definem a linha da ferrovia: escolha pontos na superfície para uma rota de superfície ou pontos no subsolo para abrir um túnel.
 
 `guard` enfrenta mobs hostis a até 8 blocos do protegido e limita a perseguição a 16 blocos do bot. Nas versões que informam o autor do dano, também reage por até 10 segundos a um agressor identificado pelo servidor, inclusive um jogador. Jogadores próximos não são atacados apenas por estarem perto. Em protocolos antigos sem identificação do agressor, permanece a proteção contra mobs hostis. Bots gerenciados não são escolhidos como agressores. Sem arma no inventário, usa a mão.
 
@@ -86,7 +92,7 @@ Quem usa o runtime instalado pode executar `bash start.sh --configure` ou `start
 @bot1 mode(default)
 ```
 
-Comandos diretos continuam disponíveis no modo IA, especialmente `stop`. Pedidos em linguagem natural enviam à API a mensagem, as 20 interações anteriores com o bot, o catálogo de ações e um resumo limitado do estado do bot: posição, dimensão, tarefa, vida, fome, saturação, oxigênio, item equipado, inventário, jogadores conectados, entidades próximas e até 120 blocos da superfície visível nos chunks carregados, amostrados em um raio máximo de 12 chunks. O histórico fica somente na memória e é separado para cada bot. O modelo devolve uma resposta e até 8 ações. O plano inteiro é validado antes de executar: movimento, seguir, proteger, parar, consultar estado, equipar, olhar, minerar, colocar blocos, fabricar itens permitidos e esperar. O programa não executa código JavaScript produzido pela IA.
+Comandos diretos continuam disponíveis no modo IA, especialmente `stop`. Pedidos em linguagem natural enviam à API a mensagem, as 20 interações anteriores com o bot, o catálogo de ações e um resumo limitado do estado do bot: posição, dimensão, tarefa, vida, fome, saturação, oxigênio, item equipado, inventário, jogadores conectados, entidades próximas e até 120 blocos da superfície visível nos chunks carregados, amostrados em um raio máximo de 12 chunks. O histórico fica somente na memória e é separado para cada bot. O modelo devolve uma resposta e até 8 ações. O plano inteiro é validado antes de executar: movimento, seguir, proteger, parar, consultar estado, equipar, olhar, minerar, colocar blocos, fabricar itens permitidos, construir ferrovias e esperar. A ação de ferrovia mantém `allowCommands: false`, salvo quando o pedido atual autoriza claramente a reposição por comando. O programa não executa código JavaScript produzido pela IA.
 
 Para `faça uma picareta de pedra`, a IA pede o objetivo `craft(stone_pickaxe, 1)` em seu plano. O executor resolve as dependências pelas receitas do servidor: coleta madeira, faz tábuas e gravetos, prepara a bancada, fabrica uma picareta de madeira, minera pedra e fabrica a picareta de pedra. Aproveita materiais, ferramentas e bancada que já existam, pulando etapas desnecessárias. Essa notação descreve a ação interna; o pedido pelo chat é em linguagem natural no modo IA.
 

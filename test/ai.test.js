@@ -93,7 +93,9 @@ test('aceita o catálogo permitido e clona ações', () => {
   const actions = [
     { type: 'equip', item: 'diamond_sword' }, { type: 'look', x: 0.5, y: 64.5, z: 0.5 },
     { type: 'dig', x: 1, y: 64, z: 1 }, { type: 'place', x: 1, y: 63, z: 1, face: 'up', item: 'minecraft:dirt' },
-    { type: 'wait', seconds: 0.5 }, { type: 'stop' }, { type: 'help' }, { type: 'guard', player: 'Alex' },
+    { type: 'wait', seconds: 0.5 }, { type: 'stop' },
+    { type: 'railway', startX: 0, startY: 64, startZ: 0, endX: 20, endY: 66, endZ: 0, allowCommands: false },
+    { type: 'guard', player: 'Alex' },
   ];
   const result = validatePlan({ reply: '  Vou ajudar.  ', actions });
   assert.equal(result.reply, 'Vou ajudar.');
@@ -116,6 +118,7 @@ const invalidPlans = [
   { reply: 'Oi!', actions: [{ type: 'place', x: 1, y: 60, z: 3, face: 'side', item: 'dirt' }] },
   { reply: 'Oi!', actions: [{ type: 'equip', item: 'dirt;kill @a' }] },
   { reply: 'Oi!', actions: [{ type: 'wait', seconds: 31 }] },
+  { reply: 'Oi!', actions: [{ type: 'railway', startX: 0, startY: 64, startZ: 0, endX: 10, endY: 64, endZ: 0, allowCommands: 'true' }] },
   { reply: 'Oi!', actions: [{ type: 'follow', player: 'Alex;stop' }] },
   { reply: 'Oi!', actions: [{ type: 'follow', player: 'Alex' }, { type: 'stop' }] },
   { reply: 'Oi!', actions: Array.from({ length: 9 }, () => ({ type: 'status' })) },

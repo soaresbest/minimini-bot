@@ -1,7 +1,8 @@
 export const PLAYER_NAME = /^[A-Za-z0-9_]{1,16}$/;
 
 export const HELP = [
-  'goto(x,y,z), follow(player), guard(player), stop, status, help, mode(ia|default)',
+  'goto(x,y,z), follow(player), guard(player), railway(x1,y1,z1,x2,y2,z2,true|false), stop, status, help, mode(ia|default)',
+  'railway: true/comandos permite /give; false/inventario usa somente o inventário.',
   'bots, botadd(nome[,default|ia[,provedor]]), botremove(nome), botconfig(nome,mode|provider|model,valor)',
   'Exemplo: @bot1 goto(100,60,300). IA: @bot1 venha até mim. Provedores: openai, gemini, grok, claude.'
 ];
@@ -22,6 +23,17 @@ export function parseCommand(text) {
   if (type === 'goto' && args.length === 3 && args.every(x => /^-?\d+(?:\.\d+)?$/.test(x))) {
     const [x, y, z] = args.map(Number);
     if (Math.abs(x) <= 29999984 && Math.abs(z) <= 29999984 && y >= -64 && y <= 319) return { type, x, y, z };
+  }
+  if (['railway', 'trilhos'].includes(type) && args.length === 7 && args.slice(0, 6).every(x => /^-?\d+$/.test(x))) {
+    const values = args.slice(0, 6).map(Number);
+    const permission = args[6].toLowerCase();
+    if (values.every((value, index) => Math.abs(value) <= (index % 3 === 1 ? 319 : 29999984))
+      && ['true', 'false', 'comandos', 'inventario'].includes(permission)) {
+      const [startX, startY, startZ, endX, endY, endZ] = values;
+      if (startY >= -64 && startY <= 319 && endY >= -64 && endY <= 319) {
+        return { type: 'railway', startX, startY, startZ, endX, endY, endZ, allowCommands: ['true', 'comandos'].includes(permission) };
+      }
+    }
   }
   if (['follow', 'guard'].includes(type) && args.length === 1 && PLAYER_NAME.test(args[0])) return { type, player: args[0] };
   if (type === 'mode' && args.length === 1 && ['ia', 'default'].includes(args[0].toLowerCase())) return { type, mode: args[0].toLowerCase() };

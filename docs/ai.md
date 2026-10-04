@@ -47,12 +47,17 @@ A API devolve uma resposta curta e até oito ações ordenadas. O programa valid
 | `help` | Nenhum | Informa comandos. |
 | `equip` | `item` | Equipa item do inventário na mão. |
 | `craft` | `item` da lista permitida, `count` inteiro de 1 a 16 | Garante a quantidade total no inventário, coletando materiais e fabricando dependências necessárias. |
+| `railway` | início e fim inteiros, `allowCommands` booleano | Constrói uma ferrovia em trechos, com alimentação e espaço livre para o carrinho. |
 | `look` | `x`, `y`, `z` | Olha para a posição. |
 | `dig` | `x`, `y`, `z` inteiros | Quebra bloco carregado ao alcance. |
 | `place` | `x`, `y`, `z` inteiros, `face`, `item` | Coloca item na face de um bloco de referência. |
 | `wait` | `seconds` de 0 a 30 | Aguarda com possibilidade de cancelamento. |
 
 Em `place`, `x,y,z` identificam o **bloco de referência**, e `face` aceita `up`, `down`, `north`, `south`, `east` ou `west`. A posição colocada é a referência acrescida do vetor dessa face. O executor ainda verifica alcance, disponibilidade do item e do bloco. Coordenadas horizontais são limitadas a ±29.999.984 e verticais a -2048…2047; limites reais da dimensão e blocos carregados continuam valendo no servidor.
+
+Em `railway`, as posições são `startX`, `startY`, `startZ`, `endX`, `endY` e `endZ`. O plano é rejeitado se esses campos não forem inteiros ou se `allowCommands` não for booleano. A IA deve usar `false` por padrão e só pode usar `true` quando a mensagem atual autoriza claramente comandos para obter os blocos. O executor não aceita texto de comando da IA: ele próprio forma `/give` com o nome validado do bot e somente `rail`, `powered_rail`, `redstone_block` ou `stone`.
+
+O trajeto é ortogonal, conserva a curva plana e limita cada subida ou descida a um bloco. A obra é recalculada em lotes de 24 posições em vez de manter uma rota grande em memória. O início e o fim são energizados quando a geometria permite; há no máximo oito posições entre trilhos eletrificados no plano e três perto de rampas. Cada trilho eletrificado fica sobre um bloco de redstone. O executor abre três blocos de altura e usa pedra como apoio em água ou onde não houver piso sólido. Sem autorização de comandos, a falta do primeiro material interrompe a tarefa e gera um aviso no chat.
 
 Exemplo de plano aceito:
 

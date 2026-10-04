@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { ChatQueue } from './chat.js';
 import { HELP } from './commands.js';
 import { CraftingTask } from './crafting.js';
+import { RailwayTask } from './railway.js';
 
 const { Movements, goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -186,6 +187,10 @@ export class BotController {
     if (action.type === 'help') { HELP.forEach(line => this.say(line)); return; }
     if (action.type === 'craft') {
       await new CraftingTask(this, signal).run(action.item, action.count);
+      return;
+    }
+    if (action.type === 'railway') {
+      await new RailwayTask(this, signal).run(action);
       return;
     }
     if (action.type === 'stop') {
