@@ -149,6 +149,40 @@ test('redstone usa o piso anterior como apoio preferencial', () => {
   assert.deepEqual(reference.face, new Vec3(1, 0, 0));
 });
 
+test('troca pedra isolada por redstone usando apoio lateral temporário na água', async () => {
+  const target = new Vec3(1, 63, 0);
+  const previousFloor = new Vec3(0, 62, 0);
+  const blocks = new Map([[target.toString(), {
+    name: 'stone', type: 1, boundingBox: 'block', position: target,
+  }]]);
+  let equipped = null;
+  const items = [
+    { name: 'stone', count: 2, type: 2 },
+    { name: 'redstone_block', count: 2, type: 3 },
+  ];
+  const air = point => ({ name: 'water', type: 0, boundingBox: 'empty', position: point });
+  const bot = {
+    entity: { position: target },
+    inventory: { items: () => items },
+    blockAt: point => blocks.get(point.toString()) ?? air(point),
+    canDigBlock: () => true,
+    dig: async block => blocks.delete(block.position.toString()),
+    stopDigging: () => {},
+    equip: async item => { equipped = item.name; },
+    lookAt: async () => {},
+    _placeBlockWithOptions: async (reference, face) => {
+      const placed = reference.position.plus(face);
+      blocks.set(placed.toString(), { name: equipped, type: 4, boundingBox: 'block', position: placed });
+    },
+  };
+  const task = new RailwayTask({ bot, useHand: async fn => await fn() }, new AbortController().signal);
+
+  await task.replace(target, 'redstone_block', { preferredReference: previousFloor });
+
+  assert.equal(bot.blockAt(target).name, 'redstone_block');
+  assert.equal([...blocks.values()].filter(block => block.name === 'stone').length, 0);
+});
+
 test('colocação relê o mundo e repete uma recusa transitória do servidor', async () => {
   const target = new Vec3(0, 64, 0);
   const support = new Vec3(0, 63, 0);

@@ -331,38 +331,64 @@ export class RailwayTask {
     let block = this.blockAt(point);
     if (!block) throw new RailwayError('o trecho seguinte ainda não foi carregado pelo servidor');
     if (block.name === item) return;
+    let temporaryReference = null;
     if (!AIR.has(block.name) && !LIQUID.has(block.name)) {
       if (!this.bot.canDigBlock(block)) throw new RailwayError(`não posso substituir ${block.name} em ${format(point)}`);
-      await this.dig(block);
-      block = this.blockAt(point);
-    }
-    for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
-      await this.ensureMaterial(item);
-      const reference = this.findReference(point, preferredReference);
-      if (!reference) throw new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`);
-      const { block: referenceBlock, face } = reference;
-      try {
-        await this.controller.useHand(async () => {
-          await this.bot.equip(this.inventoryItem(item), 'hand');
-          this.signal.throwIfAborted();
-          await this.bot.lookAt(referenceBlock.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
-          this.signal.throwIfAborted();
-          await this.bot._placeBlockWithOptions(referenceBlock, face, { forceLook: true, swingArm: 'right' });
-        }, this.signal);
-      } catch (error) {
-        this.signal.throwIfAborted();
-        await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
-        if (this.blockAt(point)?.name === item) return;
-        if (attempt === PLACE_ATTEMPTS) {
-          throw new RailwayError(`o servidor recusou colocar ${item} em ${format(point)} após ${PLACE_ATTEMPTS} tentativas`);
-        }
-        await this.moveNear(point);
-        continue;
+      // Se o bloco substituído for a única referência disponível, preserva uma
+      // face lateral antes de removê-lo. Isso acontece em pisos rasos sobre água.
+      if (item === 'redstone_block' && !this.findReference(point, preferredReference)) {
+        temporaryReference = await this.createTemporaryReference(point, preferredReference);
       }
-      if (this.blockAt(point)?.name === item) return;
-      if (attempt < PLACE_ATTEMPTS) await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
     }
-    throw new RailwayError(`não consegui confirmar ${item} em ${format(point)}`);
+    try {
+      if (!AIR.has(block.name) && !LIQUID.has(block.name)) {
+        await this.dig(block);
+        block = this.blockAt(point);
+      }
+      for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
+        await this.ensureMaterial(item);
+        const reference = this.findReference(point, preferredReference);
+        if (!reference) throw new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`);
+        const { block: referenceBlock, face } = reference;
+        try {
+          await this.controller.useHand(async () => {
+            await this.bot.equip(this.inventoryItem(item), 'hand');
+            this.signal.throwIfAborted();
+            await this.bot.lookAt(referenceBlock.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
+            this.signal.throwIfAborted();
+            await this.bot._placeBlockWithOptions(referenceBlock, face, { forceLook: true, swingArm: 'right' });
+          }, this.signal);
+        } catch (error) {
+          this.signal.throwIfAborted();
+          await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+          if (this.blockAt(point)?.name === item) return;
+          if (attempt === PLACE_ATTEMPTS) {
+            throw new RailwayError(`o servidor recusou colocar ${item} em ${format(point)} após ${PLACE_ATTEMPTS} tentativas`);
+          }
+          await this.moveNear(point);
+          continue;
+        }
+        if (this.blockAt(point)?.name === item) return;
+        if (attempt < PLACE_ATTEMPTS) await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+      }
+      throw new RailwayError(`não consegui confirmar ${item} em ${format(point)}`);
+    } finally {
+      if (temporaryReference && this.blockAt(temporaryReference)?.name === 'stone') await this.clear(temporaryReference);
+    }
+  }
+
+  async createTemporaryReference(target, previousSupport) {
+    const faces = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+    const candidates = faces
+      .map(face => target.plus(face))
+      .filter(point => !previousSupport || point.x !== previousSupport.x || point.z !== previousSupport.z);
+    for (const point of candidates) {
+      const block = this.blockAt(point);
+      if (!block || (!AIR.has(block.name) && !LIQUID.has(block.name))) continue;
+      await this.replace(point, 'stone', { preferredReference: target });
+      return point;
+    }
+    throw new RailwayError(`não há espaço lateral para apoiar redstone em ${format(target)}`);
   }
 
   findReference(target, preferredPosition = null) {
