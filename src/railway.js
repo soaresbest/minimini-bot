@@ -123,9 +123,17 @@ export class RailwayTask {
 
   async run(action) {
     this.allowCommands = action.allowCommands;
-    const currentY = Math.floor(this.bot.entity.position.y);
-    const start = integerPosition({ x: action.startX, y: action.startY ?? currentY, z: action.startZ }, 'início');
-    const validatedEnd = integerPosition({ x: action.endX, y: action.endY ?? currentY, z: action.endZ }, 'fim');
+    const origin = {
+      x: Math.floor(this.bot.entity.position.x),
+      y: Math.floor(this.bot.entity.position.y),
+      z: Math.floor(this.bot.entity.position.z),
+    };
+    const start = integerPosition({
+      x: action.startX ?? origin.x, y: action.startY ?? origin.y, z: action.startZ ?? origin.z,
+    }, 'início');
+    const validatedEnd = integerPosition({
+      x: action.endX ?? origin.x, y: action.endY ?? origin.y, z: action.endZ ?? origin.z,
+    }, 'fim');
     const end = { ...validatedEnd, y: action.endY === null ? null : validatedEnd.y };
     let current = start;
     let previous = null;

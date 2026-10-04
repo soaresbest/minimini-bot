@@ -60,11 +60,11 @@ test('fallback cria passagem plana de pedra na direção do destino', () => {
   }).position, { x: 2, y: 64, z: 1 });
 });
 
-test('altura automática usa o Y atual no início e aceita qualquer Y no destino', async () => {
+test('coordenadas automáticas usam a posição atual e aceitam qualquer Y no destino', async () => {
   const task = new RailwayTask({ bot: { entity: { position: new Vec3(4.5, 71.8, 9.5) } } }, new AbortController().signal);
   const built = [];
   task.buildCell = async cell => built.push(cell);
-  await task.run({ startX: 4, startY: null, startZ: 9, endX: 4, endY: null, endZ: 9, allowCommands: false });
+  await task.run({ startX: null, startY: null, startZ: null, endX: null, endY: null, endZ: null, allowCommands: false });
   assert.deepEqual(built, [{ index: 0, position: { x: 4, y: 71, z: 9 }, powered: true }]);
 });
 

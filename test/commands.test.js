@@ -25,7 +25,10 @@ test('parser valida tipos, argumentos, limites e comandos administrativos', () =
   assert.deepEqual(parseCommand('railway(-1999,~,20,2000,~,20,true)'), {
     type: 'railway', startX: -1999, startY: null, startZ: 20, endX: 2000, endY: null, endZ: 20, allowCommands: true
   });
-  for (const command of ['goto(NaN,60,0)', 'goto(0,1e3,0)', 'goto(30000000,64,0)', 'goto(1,2)', 'railway(0,64,0,10,64,0,sim)', 'railway(0,64,0,10,64,0,inventario)', 'railway(0,64,0,10.5,64,0,true)', 'railway(~,64,0,10,64,0,true)', 'follow()', 'stop(now)', 'mode(js)', 'botadd(foo,,openai)', 'botconfig(foo,apiKey,secret)', 'process.exit()', 'help;stop']) assert.equal(parseCommand(command), null, command);
+  assert.deepEqual(parseCommand('railway(~,~,~,2000,~,~,false)'), {
+    type: 'railway', startX: null, startY: null, startZ: null, endX: 2000, endY: null, endZ: null, allowCommands: false
+  });
+  for (const command of ['goto(NaN,60,0)', 'goto(0,1e3,0)', 'goto(30000000,64,0)', 'goto(1,2)', 'railway(0,64,0,10,64,0,sim)', 'railway(0,64,0,10,64,0,inventario)', 'railway(0,64,0,10.5,64,0,true)', 'follow()', 'stop(now)', 'mode(js)', 'botadd(foo,,openai)', 'botconfig(foo,apiKey,secret)', 'process.exit()', 'help;stop']) assert.equal(parseCommand(command), null, command);
 });
 
 test('chat limpa controles, limita pacotes e impede comandos slash', () => {
