@@ -35,6 +35,13 @@ function runTo(task, end) {
     endX: end.x, endY: end.y ?? null, endZ: end.z, allowCommands: false });
 }
 
+test('início automático sobre grass path parcial usa o nível acima do piso', async () => {
+  const { task, built } = terrainRun(({ y }) => y === 63 ? 'dirt_path' : y < 63 ? 'dirt' : 'air');
+  task.bot.entity.position = new Vec3(0.5, 63.9375, 0.5);
+  await runTo(task, { x: 0, z: 0 });
+  assert.equal(built[0].position.y, 64);
+});
+
 test('A* acompanha terreno plano e rampas de um bloco', () => {
   const heights = new Map([['1,0', 65], ['2,0', 66], ['3,0', 66], ['4,0', 65]]);
   const path = findTerrainPath({

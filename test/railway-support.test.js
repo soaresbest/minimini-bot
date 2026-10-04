@@ -278,6 +278,45 @@ for (const material of ['grass_block', 'dirt', 'stone']) {
   });
 }
 
+for (const material of ['grass_path', 'dirt_path', 'farmland', 'oak_slab', 'bloco_parcial_futuro']) {
+  test(`troca ${material} por pedra antes de colocar trilho, sem mudar a altura`, async () => {
+    const previous = new Vec3(0, 64, 0), position = new Vec3(1, 64, 0), support = position.offset(0, -1, 0);
+    const world = railwayWorld({
+      blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone'], [support, material]],
+      botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
+    });
+    world.get(support).shapes = [[0, 0, 0, 1, 15 / 16, 1]];
+    await world.task.buildCell({ index: 1, position, previous, powered: false });
+    assert.equal(world.get(support).name, 'stone');
+    assert.equal(world.get(position).name, 'rail');
+    assert.equal(world.get(previous).name, 'rail');
+    assert.deepEqual(world.placed.map(e => e.name), ['stone', 'rail']);
+  });
+}
+
+test('falta de pedra preserva o piso incompatível e avisa em vez de escavá-lo', async () => {
+  const position = new Vec3(1, 64, 0), support = position.offset(0, -1, 0);
+  const world = railwayWorld({ blocks: [[support, 'dirt_path']], botPosition: new Vec3(0.5, 64, 0.5), waterY: -1 });
+  world.items.find(item => item.name === 'stone').count = 0;
+  await assert.rejects(world.task.buildCell({ index: 0, position, powered: false }), { code: 'RAILWAY_MATERIALS' });
+  assert.equal(world.get(support).name, 'dirt_path');
+  assert.deepEqual(world.dug, []);
+});
+
+test('piso aparentemente completo recusado pelo servidor recebe pedra uma única vez', async () => {
+  const position = new Vec3(1, 64, 0), support = position.offset(0, -1, 0);
+  const world = railwayWorld({
+    blocks: [[support, 'bloco_de_mod'], [support.offset(0, -1, 0), 'stone']],
+    botPosition: new Vec3(0.5, 64, 0.5), waterY: -1,
+    refusePlacement: (_, name) => name === 'rail' && world.get(support).name !== 'stone',
+  });
+  world.get(support).shapes = [[0, 0, 0, 1, 1, 1]];
+  await world.task.buildCell({ index: 0, position, powered: false });
+  assert.equal(world.get(support).name, 'stone');
+  assert.equal(world.get(position).name, 'rail');
+  assert.equal(world.placed.filter(e => e.name === 'stone').length, 1);
+});
+
 for (const liquid of LIQUIDS) {
   test(`substitui o piso de ${liquid} por pedra e mantém o trilho fora do líquido`, async () => {
     const previous = new Vec3(0, 64, 0);

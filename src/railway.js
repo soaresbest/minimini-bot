@@ -1,6 +1,7 @@
 import pathfinderPackage from 'mineflayer-pathfinder';
 import vec3Package from 'vec3';
 import { setTimeout as delay } from 'node:timers/promises';
+import { supportsRail } from './railway-support.js';
 
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -122,6 +123,13 @@ export class RailwayTask {
     const start = integerPosition({
       x: action.startX ?? origin.x, y: action.startY ?? origin.y, z: action.startZ ?? origin.z,
     }, 'início');
+    // Em paths/lajes o pé está dentro do bloco parcial. O trilho deve ficar
+    // acima do piso normalizado, não tentar ocupar o próprio piso.
+    if (action.startY == null && this.bot.blockAt) {
+      const feet = this.blockAt(vec(start));
+      if (this.isFloorCandidate(feet) && !this.isPassable(feet)
+        && this.isPassable(this.blockAt(vec(start).offset(0, 1, 0)))) start.y++;
+    }
     const validatedEnd = integerPosition({
       x: action.endX ?? origin.x, y: action.endY ?? origin.y, z: action.endZ ?? origin.z,
     }, 'fim');
@@ -265,7 +273,7 @@ export class RailwayTask {
     // apoio substituível na superfície, nunca como espaço para o carrinho.
     return [currentY - 1, currentY, currentY + 1].filter(y => {
       const floor = at(y - 1);
-      return (this.isSolid(floor) || LIQUID.has(floor?.name))
+      return this.isFloorCandidate(floor)
         && this.isPassable(at(y)) && this.hasClearance(x, z, y, previous);
     });
   }
@@ -304,53 +312,30 @@ export class RailwayTask {
     for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
 
     const support = point.offset(0, -1, 0);
-    const previousSupport = cell.previous ? vec(cell.previous).offset(0, -1, 0) : null;
     const supportBlock = this.blockAt(support);
     this.validateFloor(point);
     const liquidSupport = LIQUID.has(supportBlock?.name);
     const unstableSupport = FALLING_SUPPORTS.has(supportBlock?.name)
       || supportBlock?.name.endsWith('_concrete_powder');
-    const usedStoneSupport = liquidSupport || unstableSupport;
+    let usedStoneSupport = liquidSupport || unstableSupport || !supportsRail(supportBlock);
     const supportItem = cell.powered ? 'redstone_block' : (usedStoneSupport ? 'stone' : null);
     if (supportItem && supportBlock?.name !== supportItem) {
-      this.log('trocando_piso', { position: support, from: supportBlock.name, to: supportItem,
-        reason: liquidSupport ? 'liquido' : unstableSupport ? 'gravidade' : 'alimentacao' });
-      await this.ensureMaterial(supportItem);
-      const previousRail = this.isSolid(supportBlock) && cell.previous?.y === point.y - 1
-        ? this.blockAt(vec(cell.previous)) : null;
-      const restoreRamp = RAILS.has(previousRail?.name);
-      if (restoreRamp) {
-        await this.ensureMaterial(previousRail.name);
-        if (!this.bot.canDigBlock(previousRail)) throw new RailwayError(`não posso remover ${previousRail.name} em ${format(previousRail.position)}`);
-      }
-      const existingRail = this.blockAt(point);
-      // Retire o trilho antes de trocar o piso: o servidor pode destruir o
-      // trilho pela falta de apoio depois que o cliente já o deu por pronto.
-      if (RAILS.has(existingRail?.name)) {
-        if (!this.bot.canDigBlock(existingRail)) throw new RailwayError(`não posso remover ${existingRail.name} em ${format(point)}`);
-        await this.dig(existingRail);
-      }
-      // A rampa anterior depende também da face do piso mais alto. Retire-a
-      // antes da troca para evitar sua destruição tardia pelo servidor.
-      if (restoreRamp) await this.dig(previousRail);
-      await this.replace(support, supportItem, { preferredReference: previousSupport });
-      if (restoreRamp) {
-        for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
-          // A confirmação do apoio pode chegar antes da destruição agendada
-          // da rampa. Espere os updates e confirme também depois de repô-la.
-          await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
-          this.log('repondo_rampa', { position: previousRail.position, item: previousRail.name, support, attempt });
-          await this.replace(previousRail.position, previousRail.name);
-          await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
-          if (this.blockAt(previousRail.position)?.name === previousRail.name) break;
-          if (attempt === PLACE_ATTEMPTS) {
-            throw new RailwayError(`a rampa em ${format(previousRail.position)} não permaneceu apoiada após trocar o piso`, 'RAILWAY_PLACEMENT');
-          }
-        }
-      }
+      await this.prepareRailFloor(point, supportItem, cell.previous,
+        liquidSupport ? 'liquido' : unstableSupport ? 'gravidade' : !supportsRail(supportBlock) ? 'apoio_incompativel' : 'alimentacao');
     }
 
-    await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
+    const railItem = cell.powered ? 'powered_rail' : 'rail';
+    try {
+      await this.replace(point, railItem);
+    } catch (error) {
+      // Formas de colisão não representam todas as regras do servidor/mods.
+      // Se o piso aparentemente válido ainda for recusado, normalize-o uma vez.
+      if (error.code !== 'RAILWAY_PLACEMENT' || supportItem
+        || ['stone', 'redstone_block'].includes(this.blockAt(support)?.name)) throw error;
+      await this.prepareRailFloor(point, 'stone', cell.previous, 'apoio_recusado');
+      usedStoneSupport = true;
+      await this.replace(point, railItem);
+    }
     this.completedRailColumns.set(columnKey(point), point.y);
     this.lastCompleted = { index: cell.index, position: cell.position };
     this.pendingCell = null;
@@ -360,9 +345,49 @@ export class RailwayTask {
     return { usedStoneSupport };
   }
 
+  async prepareRailFloor(point, supportItem, previous, reason) {
+    const support = point.offset(0, -1, 0);
+    const previousSupport = previous ? vec(previous).offset(0, -1, 0) : null;
+    const supportBlock = this.blockAt(support);
+    this.log('trocando_piso', { position: support, from: supportBlock?.name, to: supportItem, reason });
+    await this.ensureMaterial(supportItem);
+    const previousRail = this.isSolid(supportBlock) && previous?.y === point.y - 1
+      ? this.blockAt(vec(previous)) : null;
+    const restoreRamp = RAILS.has(previousRail?.name);
+    if (restoreRamp) {
+      await this.ensureMaterial(previousRail.name);
+      if (!this.bot.canDigBlock(previousRail)) throw new RailwayError(`não posso remover ${previousRail.name} em ${format(previousRail.position)}`);
+    }
+    const existingRail = this.blockAt(point);
+    // Retire o trilho antes de trocar o piso: o servidor pode destruir o
+    // trilho pela falta de apoio depois que o cliente já o deu por pronto.
+    if (RAILS.has(existingRail?.name)) {
+      if (!this.bot.canDigBlock(existingRail)) throw new RailwayError(`não posso remover ${existingRail.name} em ${format(point)}`);
+      await this.dig(existingRail);
+    }
+    // A rampa anterior depende também da face do piso mais alto. Retire-a
+    // antes da troca para evitar sua destruição tardia pelo servidor.
+    if (restoreRamp) await this.dig(previousRail);
+    await this.replace(support, supportItem, { preferredReference: previousSupport });
+    if (restoreRamp) {
+      for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
+        // A confirmação do apoio pode chegar antes da destruição agendada
+        // da rampa. Espere os updates e confirme também depois de repô-la.
+        await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+        this.log('repondo_rampa', { position: previousRail.position, item: previousRail.name, support, attempt });
+        await this.replace(previousRail.position, previousRail.name);
+        await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+        if (this.blockAt(previousRail.position)?.name === previousRail.name) break;
+        if (attempt === PLACE_ATTEMPTS) {
+          throw new RailwayError(`a rampa em ${format(previousRail.position)} não permaneceu apoiada após trocar o piso`, 'RAILWAY_PLACEMENT');
+        }
+      }
+    }
+  }
+
   validateFloor(point) {
     const support = this.blockAt(point.offset(0, -1, 0));
-    if (!support || (!this.isSolid(support) && !LIQUID.has(support.name))) {
+    if (!this.isFloorCandidate(support)) {
       throw new RailwayError(`o piso em ${format(point.offset(0, -1, 0))} não oferece apoio; é necessário procurar um desvio pelo terreno`, 'RAILWAY_TERRAIN_CHANGED');
     }
     if (!this.isPassable(this.blockAt(point)) || !this.hasClearance(point.x, point.z, point.y)) {
@@ -383,6 +408,11 @@ export class RailwayTask {
     return this.planningBlocks.get(key);
   }
   isSolid(block) { return Boolean(block && block.boundingBox !== 'empty' && !LIQUID.has(block.name)); }
+
+  isFloorCandidate(block) {
+    return Boolean(block && !AIR.has(block.name) && !RAILS.has(block.name)
+      && (this.isSolid(block) || LIQUID.has(block.name) || block.shapes?.length));
+  }
 
   async clear(point) {
     const block = this.blockAt(point);
@@ -412,7 +442,7 @@ export class RailwayTask {
       if (!this.bot.canDigBlock(block)) throw new RailwayError(`não posso substituir ${block.name} em ${format(point)}`);
       // Preserve uma face antes de escavar um bloco isolado. Água por si só
       // não exige apoio temporário quando já existe uma face sólida vizinha.
-      if (item === 'redstone_block' && !this.findReference(point, preferredReference)) {
+      if (['stone', 'redstone_block'].includes(item) && !this.findReference(point, preferredReference)) {
         temporaryReference = await this.createTemporaryReference(point, preferredReference);
       }
     }
