@@ -20,6 +20,7 @@ const AIR = new Set(['air', 'cave_air', 'void_air']);
 const LIQUID = new Set(['water', 'flowing_water']);
 const LAVA = new Set(['lava', 'flowing_lava']);
 const RAILS = new Set(['rail', 'powered_rail', 'detector_rail', 'activator_rail']);
+const FALLING_SUPPORTS = new Set(['sand', 'red_sand', 'gravel']);
 const MATERIAL_BATCH = Object.freeze({ rail: 64, powered_rail: 32, redstone_block: 32, stone: 64 });
 const FACES = Object.freeze([
   new Vec3(0, 1, 0),
@@ -294,11 +295,14 @@ export class RailwayTask {
 
     const support = point.offset(0, -1, 0);
     const previousSupport = cell.previous ? vec(cell.previous).offset(0, -1, 0) : null;
-    const missingSupport = !this.isSolid(this.blockAt(support));
+    const supportBlock = this.blockAt(support);
+    const missingSupport = !this.isSolid(supportBlock);
+    const unstableSupport = FALLING_SUPPORTS.has(supportBlock?.name)
+      || supportBlock?.name.endsWith('_concrete_powder');
     const usedStoneSupport = cell.forceStone || waterOnPath || missingSupport;
     if (cell.powered) {
       await this.replace(support, 'redstone_block', { preferredReference: previousSupport });
-    } else if (usedStoneSupport) {
+    } else if (usedStoneSupport || unstableSupport) {
       await this.replace(support, 'stone', { preferredReference: previousSupport });
     }
 

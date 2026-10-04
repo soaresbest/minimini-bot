@@ -251,6 +251,22 @@ test('goto reporta caminho impossível e cancela imediatamente quando stop é re
   assert.equal(h.bot.currentGoal, null);
 });
 
+test('navegação aceita busca parcial e encerra com falha quando o pathfinder atinge timeout', async t => {
+  const h = harness(); t.after(h.close);
+  const goal = { isEnd: point => point.x === 100 };
+  const pending = h.controller.moveToGoal(goal, AbortSignal.timeout(2000));
+  h.bot.emit('path_update', { status: 'partial' });
+  assert.equal(h.controller.pathFailure, false, 'uma busca em andamento não é uma falha');
+  await delay(210);
+  assert.equal(h.bot.currentGoal, goal, 'continua navegando enquanto há resultado parcial');
+
+  h.bot.emit('path_update', { status: 'timeout' });
+  await assert.rejects(pending, /não há caminho seguro/u);
+
+  assert.equal(h.controller.goal, null);
+  assert.equal(h.bot.currentGoal, null, 'limpa o objetivo encerrado sem aguardar indefinidamente');
+});
+
 test('encerrar gerenciador impede reconexões e encerra todas as instâncias', t => {
   const h = harness(); t.after(h.close);
   h.manager.start();

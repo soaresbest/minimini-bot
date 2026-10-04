@@ -45,7 +45,9 @@ export class BotController {
     this.listen('spawn', () => this.onSpawn());
     this.listen('chat', (username, message) => { void manager.handleChat(this, username, message).catch(() => this.say('Não consegui concluir o comando.')); });
     this.listen('death', () => { this.life++; this.ready = false; this.clearServerAuthentication(); this.stop(); this.say('Morri. Aguardando renascer.'); });
-    this.listen('path_update', result => { if (result.status === 'noPath' && !this.eating) this.pathFailure = true; });
+    this.listen('path_update', result => {
+      if (['noPath', 'timeout'].includes(result.status) && !this.eating) this.pathFailure = true;
+    });
     this.listen('entityHurt', (entity, source) => {
       const protectedEntity = this.following?.guard && this.findPlayer(this.following.player)?.entity;
       if (!protectedEntity || entity?.id !== protectedEntity.id || !source?.position || source.id === protectedEntity.id || source.id === this.bot.entity.id || (source.username && this.manager.isBot(source.username))) return;

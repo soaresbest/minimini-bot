@@ -5,6 +5,7 @@ import { RailwayTask } from '../src/railway.js';
 
 const { Vec3 } = vec3Package;
 const EMPTY = new Set(['air', 'water', 'rail', 'powered_rail']);
+const FALLING = new Set(['sand', 'red_sand', 'gravel', 'white_concrete_powder']);
 
 function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = true, refusePlacement = () => false }) {
   const blocks = new Map();
@@ -29,6 +30,26 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
     return blocks.get(position.toString()) ?? block(position, position.y <= waterY ? 'water' : 'air');
   }
   for (const [position, name] of initialBlocks) put(position, name);
+
+  function updatePhysics() {
+    for (const current of [...blocks.values()].sort((a, b) => a.position.y - b.position.y)) {
+      if (!FALLING.has(current.name)) continue;
+      let destination = current.position;
+      while (destination.y > 0 && get(destination.offset(0, -1, 0)).boundingBox === 'empty') {
+        destination = destination.offset(0, -1, 0);
+      }
+      if (!destination.equals(current.position)) {
+        blocks.delete(current.position.toString());
+        put(destination, current.name);
+      }
+    }
+    for (const current of [...blocks.values()]) {
+      if (['rail', 'powered_rail'].includes(current.name)
+        && get(current.position.offset(0, -1, 0)).boundingBox === 'empty') {
+        blocks.delete(current.position.toString());
+      }
+    }
+  }
 
   const bot = {
     entity: { position: botPosition.clone(), width: 0.6, height: 1.8 },
@@ -92,7 +113,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
     },
   };
   const task = new RailwayTask(controller, new AbortController().signal);
-  return { task, get, placed, dug, invalidPlacements, refusedPlacements, items };
+  return { task, get, placed, dug, invalidPlacements, refusedPlacements, items, updatePhysics };
 }
 
 function assertTrack(world, position, previous) {
@@ -210,3 +231,32 @@ test('confere estoque de redstone antes de escavar o piso submerso', async () =>
   assert.deepEqual(world.dug, []);
   assert.deepEqual(world.placed, []);
 });
+
+for (const material of FALLING) {
+  test(`estabiliza ${material} suspenso antes do trilho comum para resistir às atualizações de gravidade`, async () => {
+    const previous = new Vec3(0, 64, 0);
+    const position = new Vec3(1, 64, 0);
+    const support = position.offset(0, -1, 0);
+    const world = railwayWorld({
+      blocks: [
+        [previous, 'rail'], [previous.offset(0, -1, 0), 'stone'],
+        [support, material], [support.offset(0, -3, 0), 'stone'],
+      ],
+      botPosition: previous.offset(0.5, 0, 0.5),
+      waterY: -1,
+    });
+
+    assert.equal(world.get(support.offset(0, -1, 0)).name, 'air', 'o piso natural começa suspenso');
+    await world.task.buildCell({ index: 1, position, previous, powered: false });
+    world.updatePhysics();
+
+    assert.equal(world.get(support).name, 'stone', 'o piso final é um bloco que não cai');
+    assert.equal(world.get(position).name, 'rail', 'o trilho continua apoiado depois da atualização física');
+    assert.equal(world.get(previous).name, 'rail');
+    assert.equal(world.get(previous.offset(0, -1, 0)).name, 'stone');
+    assert.ok(!world.dug.some(point => point.equals(previous) || point.equals(previous.offset(0, -1, 0))));
+    assert.deepEqual(world.invalidPlacements, []);
+    assert.equal(world.items.find(item => item.name === 'stone').count, 63);
+    assert.equal(world.items.find(item => item.name === 'rail').count, 63);
+  });
+}
