@@ -13,6 +13,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
   const dug = [];
   const invalidPlacements = [];
   const refusedPlacements = [];
+  const delayedRailRemovals = [];
   const items = ['stone', 'redstone_block', 'powered_rail', 'rail']
     .map((name, index) => ({ name, count: 64, type: index + 1 }));
   let heldItem = null;
@@ -51,6 +52,10 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
     }
   }
 
+  function flushServerUpdates() {
+    for (const position of delayedRailRemovals.splice(0)) blocks.delete(position.toString());
+  }
+
   const bot = {
     entity: { position: botPosition.clone(), width: 0.6, height: 1.8 },
     inventory: { items: () => items.filter(item => item.count > 0) },
@@ -58,6 +63,12 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
     canDigBlock: () => true,
     dig: async current => {
       assert.equal(get(current.position).name, current.name, 'mineração usa o bloco atual do mundo');
+      const above = current.position.offset(0, 1, 0);
+      if (current.boundingBox === 'block' && ['rail', 'powered_rail'].includes(get(above).name)) {
+        // O servidor já removeu o trilho sem apoio, mas o pacote ainda não
+        // chegou: blockAt continua vendo o trilho até flushServerUpdates.
+        delayedRailRemovals.push(above);
+      }
       dug.push(current.position.clone());
       blocks.delete(current.position.toString());
     },
@@ -113,7 +124,7 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, blockBody = 
     },
   };
   const task = new RailwayTask(controller, new AbortController().signal);
-  return { task, get, placed, dug, invalidPlacements, refusedPlacements, items, updatePhysics };
+  return { task, get, placed, dug, invalidPlacements, refusedPlacements, items, updatePhysics, flushServerUpdates };
 }
 
 function assertTrack(world, position, previous) {
@@ -260,3 +271,32 @@ for (const material of FALLING) {
     assert.equal(world.items.find(item => item.name === 'rail').count, 63);
   });
 }
+
+test('retira e recoloca trilho existente ao estabilizar areia antes das atualizações tardias do servidor', async () => {
+  const previous = new Vec3(0, 64, 0);
+  const position = new Vec3(1, 64, 0);
+  const support = position.offset(0, -1, 0);
+  const world = railwayWorld({
+    blocks: [
+      [previous, 'rail'], [previous.offset(0, -1, 0), 'stone'],
+      [position, 'rail'], [support, 'sand'], [support.offset(0, -3, 0), 'stone'],
+    ],
+    botPosition: previous.offset(0.5, 0, 0.5),
+    waterY: -1,
+  });
+
+  await world.task.buildCell({ index: 1, position, previous, powered: false });
+  world.flushServerUpdates();
+  world.updatePhysics();
+
+  assert.equal(world.get(support).name, 'stone');
+  assert.equal(world.get(position).name, 'rail', 'o trilho permanece após receber todas as atualizações do servidor');
+  const railDigIndex = world.dug.findIndex(point => point.equals(position));
+  const supportDigIndex = world.dug.findIndex(point => point.equals(support));
+  assert.ok(railDigIndex >= 0 && supportDigIndex > railDigIndex, 'retira o trilho antes de escavar seu piso');
+  assert.ok(world.placed.some(entry => entry.name === 'rail' && entry.position.equals(position)),
+    'confirma uma nova colocação do trilho após substituir o piso');
+  assert.equal(world.get(previous).name, 'rail');
+  assert.equal(world.get(previous.offset(0, -1, 0)).name, 'stone');
+  assert.deepEqual(world.invalidPlacements, []);
+});

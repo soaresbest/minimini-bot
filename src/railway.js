@@ -300,10 +300,17 @@ export class RailwayTask {
     const unstableSupport = FALLING_SUPPORTS.has(supportBlock?.name)
       || supportBlock?.name.endsWith('_concrete_powder');
     const usedStoneSupport = cell.forceStone || waterOnPath || missingSupport;
-    if (cell.powered) {
-      await this.replace(support, 'redstone_block', { preferredReference: previousSupport });
-    } else if (usedStoneSupport || unstableSupport) {
-      await this.replace(support, 'stone', { preferredReference: previousSupport });
+    const supportItem = cell.powered ? 'redstone_block' : (usedStoneSupport || unstableSupport ? 'stone' : null);
+    if (supportItem && supportBlock?.name !== supportItem) {
+      await this.ensureMaterial(supportItem);
+      const existingRail = this.blockAt(point);
+      // Retire o trilho antes de trocar o piso: o servidor pode destruir o
+      // trilho pela falta de apoio depois que o cliente já o deu por pronto.
+      if (RAILS.has(existingRail?.name)) {
+        if (!this.bot.canDigBlock(existingRail)) throw new RailwayError(`não posso remover ${existingRail.name} em ${format(point)}`);
+        await this.dig(existingRail);
+      }
+      await this.replace(support, supportItem, { preferredReference: previousSupport });
     }
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');
