@@ -56,8 +56,10 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
   while (open.size) {
     const current = open.pop();
     if (current.g !== best.get(stateKey(current))) continue;
-    if (reachedGoal(current, goal, goalDistance)) return reconstruct(current);
+    const atGoal = reachedGoal(current, goal, goalDistance);
+    if (atGoal && goalDistance === 0) return reconstruct(current);
     if (++visited > maxNodes) break;
+    let hasContinuation = false;
 
     const directions = [...DIRECTIONS].sort((a, b) => directionHeuristic(current, a, goal) - directionHeuristic(current, b, goal));
     for (const direction of directions) {
@@ -83,6 +85,7 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
         // plano e curvar: são os vizinhos mais baixos que ficam inclinados.
         if (turning && (current.slope < 0 || slope > 0)) continue;
         if (current.slope < 0 && slope > 0) continue;
+        hasContinuation = true;
         const g = current.g + 1 + Math.abs(slope) * 0.75 + (turning ? 0.2 : 0) + costAt(x, y, z);
         const next = { x, y, z, direction: direction.name, slope, g, parent: current };
         const key = stateKey(next);
@@ -91,6 +94,9 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
         open.push({ ...next, f: g + heuristic(next, goal, goalDistance) });
       }
     }
+    // Um limite de planejamento não é o destino final: não aceite parar
+    // exatamente num beco cuja única saída exigiria refazer os trilhos.
+    if (atGoal && hasContinuation) return reconstruct(current);
   }
   throw new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco', 'RAILWAY_NO_ROUTE');
 }

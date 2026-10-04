@@ -154,6 +154,33 @@ test('A* informa quando não há alternativa dentro da área pesquisada', () => 
   }), error => error instanceof RailwayError && error.code === 'RAILWAY_NO_ROUTE');
 });
 
+test('A* evita encerrar trecho parcial em beco sem sucessor e escolhe o desvio com continuação', () => {
+  const columns = new Set([
+    ...Array.from({ length: 6 }, (_, x) => `${x},0`),
+    '1,1', ...Array.from({ length: 7 }, (_, index) => `${index + 1},2`),
+  ]);
+  const path = findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 10, y: 64, z: 0 }, goalDistance: 6,
+    heightsAt: (x, z) => columns.has(`${x},${z}`) ? [64] : [],
+    blocked: (x, z) => x === 5 && z === 0,
+  });
+
+  assert.ok(!path.some(({ x, z }) => x === 4 && z === 0),
+    'o ponto mais próximo atinge o horizonte, mas só permitiria voltar ou entrar em coluna bloqueada');
+  assert.deepEqual(path.at(-1), { x: 6, y: 64, z: 2 }, 'termina o trecho onde há continuidade pelo terreno');
+  assert.ok(path.some(({ x, z }) => x === 1 && z === 1), 'usa a bifurcação antes do beco');
+  assert.equal(new Set(path.map(({ x, z }) => `${x},${z}`)).size, path.length);
+});
+
+test('A* aceita destino final em beco sem exigir uma continuação após o fim da ferrovia', () => {
+  const path = findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 64, z: 0 }, goalDistance: 0,
+    heightsAt: (x, z) => z === 0 && x >= 0 && x <= 4 ? [64] : [],
+  });
+
+  assert.deepEqual(path, Array.from({ length: 5 }, (_, x) => ({ x, y: 64, z: 0 })));
+});
+
 test('obra contorna uma parede após a água sem antecipar escada acima do terreno', async () => {
   const { task, built } = terrainRun(({ x, y, z }) => {
     if (x === 3 && Math.abs(z) <= 1 && y <= 69) return 'stone';
