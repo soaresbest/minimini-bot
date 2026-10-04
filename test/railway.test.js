@@ -263,6 +263,24 @@ test('planeja o desvio antes de ultrapassar a bifurcação de um corredor sem sa
     'o desvio chega ao fim sem reutilizar colunas');
 });
 
+test('antecipa o fim de um corredor além de quarenta blocos e usa a bifurcação distante', async () => {
+  const { task, built } = terrainRun(({ x, y, z }) => {
+    const corridor = z === 0 && x >= 0 && x <= 45;
+    const fork = x === 5 && z >= 0 && z <= 3;
+    const bypass = z === 3 && x >= 5 && x <= 80;
+    const arrival = x === 80 && z >= 0 && z <= 3;
+    return y <= (corridor || fork || bypass || arrival ? 63 : 50) ? 'stone' : 'air';
+  });
+
+  await runTo(task, { x: 80, z: 0 });
+
+  assert.deepEqual(built.at(-1).position, { x: 80, y: 64, z: 0 });
+  assert.ok(built.some(({ position: { x, z } }) => x === 5 && z === 1));
+  assert.ok(!built.some(({ position: { x, z } }) => x > 5 && x <= 45 && z === 0),
+    'enxerga o beco após quarenta blocos antes de perder a bifurcação em x=5');
+  assert.equal(new Set(built.map(cell => `${cell.position.x},${cell.position.z}`)).size, built.length);
+});
+
 test('preserva um desvio longo que começa afastando-se do destino e reserva a próxima orientação', async () => {
   const { task, built } = terrainRun(({ y }) => y <= 63 ? 'stone' : 'air');
   const point = (x, z) => ({ x, y: 64, z });

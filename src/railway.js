@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
 
-const PLAN_HORIZON = 40;
+const PLAN_HORIZON = 64;
 const BUILD_BATCH = 12;
 const SEARCH_RADIUS = 64;
 const EXTENDED_SEARCH_RADIUS = 96;
