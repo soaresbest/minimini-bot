@@ -183,6 +183,47 @@ test('troca pedra isolada por redstone usando apoio lateral temporário na água
   assert.equal([...blocks.values()].filter(block => block.name === 'stone').length, 0);
 });
 
+test('troca areia submersa por redstone usando a água acima como apoio temporário', async () => {
+  const target = new Vec3(1, 63, 0);
+  const above = target.offset(0, 1, 0);
+  const below = target.offset(0, -1, 0);
+  const previousFloor = new Vec3(0, 62, 0);
+  const sandPositions = [target, below, target.offset(1, 0, 0), target.offset(-1, 0, 0),
+    target.offset(0, 0, 1), target.offset(0, 0, -1)];
+  const blocks = new Map(sandPositions.map(position => [position.toString(), {
+    name: 'sand', type: 1, boundingBox: 'block', position,
+  }]));
+  let equipped = null;
+  const items = [
+    { name: 'stone', count: 2, type: 2 },
+    { name: 'redstone_block', count: 2, type: 3 },
+  ];
+  const water = point => ({ name: 'water', type: 0, boundingBox: 'empty', position: point });
+  const bot = {
+    entity: { position: target },
+    inventory: { items: () => items },
+    blockAt: point => blocks.get(point.toString()) ?? water(point),
+    canDigBlock: () => true,
+    dig: async block => {
+      blocks.delete(block.position.toString());
+      if (block.position.equals(target)) blocks.delete(below.toString());
+    },
+    stopDigging: () => {},
+    equip: async item => { equipped = item.name; },
+    lookAt: async () => {},
+    _placeBlockWithOptions: async (reference, face) => {
+      const placed = reference.position.plus(face);
+      blocks.set(placed.toString(), { name: equipped, type: 4, boundingBox: 'block', position: placed });
+    },
+  };
+  const task = new RailwayTask({ bot, useHand: async fn => await fn() }, new AbortController().signal);
+
+  await task.replace(target, 'redstone_block', { preferredReference: previousFloor });
+
+  assert.equal(bot.blockAt(target).name, 'redstone_block');
+  assert.equal(bot.blockAt(above).name, 'water');
+});
+
 test('colocação relê o mundo e repete uma recusa transitória do servidor', async () => {
   const target = new Vec3(0, 64, 0);
   const support = new Vec3(0, 63, 0);

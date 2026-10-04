@@ -335,8 +335,10 @@ export class RailwayTask {
     if (!AIR.has(block.name) && !LIQUID.has(block.name)) {
       if (!this.bot.canDigBlock(block)) throw new RailwayError(`não posso substituir ${block.name} em ${format(point)}`);
       // Se o bloco substituído for a única referência disponível, preserva uma
-      // face lateral antes de removê-lo. Isso acontece em pisos rasos sobre água.
-      if (item === 'redstone_block' && !this.findReference(point, preferredReference)) {
+      // face antes de removê-lo. Submerso, faz isso mesmo quando há areia abaixo,
+      // pois a atualização de física pode invalidar essa referência após o dig.
+      const submerged = LIQUID.has(this.blockAt(point.offset(0, 1, 0))?.name);
+      if (item === 'redstone_block' && (submerged || !this.findReference(point, preferredReference))) {
         temporaryReference = await this.createTemporaryReference(point, preferredReference);
       }
     }
@@ -378,7 +380,11 @@ export class RailwayTask {
   }
 
   async createTemporaryReference(target, previousSupport) {
-    const faces = [new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)];
+    const faces = [
+      new Vec3(1, 0, 0), new Vec3(-1, 0, 0),
+      new Vec3(0, 0, 1), new Vec3(0, 0, -1),
+      new Vec3(0, 1, 0),
+    ];
     const candidates = faces
       .map(face => target.plus(face))
       .filter(point => !previousSupport || point.x !== previousSupport.x || point.z !== previousSupport.z);
@@ -388,7 +394,7 @@ export class RailwayTask {
       await this.replace(point, 'stone', { preferredReference: target });
       return point;
     }
-    throw new RailwayError(`não há espaço lateral para apoiar redstone em ${format(target)}`);
+    throw new RailwayError(`não há espaço temporário para apoiar redstone em ${format(target)}`);
   }
 
   findReference(target, preferredPosition = null) {
