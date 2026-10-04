@@ -236,6 +236,20 @@ export class RailwayTask {
           return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
         } catch (extendedError) {
           if (extendedError?.code !== 'RAILWAY_NO_ROUTE') throw extendedError;
+          // Um trilho comum concluído pela própria obra pode mudar a saída
+          // reservada. A geometria com o passo anterior continua validada.
+          if (options.forcedFirst
+            && this.completedRailColumns.get(columnKey(options.start)) === options.start.y
+            && this.blockAt(vec(options.start))?.name === 'rail') {
+            this.log('ajustando_saida', { from: options.start, forcedFirst: options.forcedFirst,
+              radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+            try {
+              return findTerrainPath({ ...options, forcedFirst: null,
+                radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+            } catch (adjustedError) {
+              if (adjustedError?.code !== 'RAILWAY_NO_ROUTE') throw adjustedError;
+            }
+          }
           this.log('sem_rota', { from: options.start, surroundings: this.describeTerrain(options.start) });
           throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; rampas precisam variar no máximo um bloco por posição`, 'RAILWAY_NO_ROUTE');
         }
@@ -321,8 +335,18 @@ export class RailwayTask {
       if (restoreRamp) await this.dig(previousRail);
       await this.replace(support, supportItem, { preferredReference: previousSupport });
       if (restoreRamp) {
-        this.log('repondo_rampa', { position: previousRail.position, item: previousRail.name, support });
-        await this.replace(previousRail.position, previousRail.name);
+        for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
+          // A confirmação do apoio pode chegar antes da destruição agendada
+          // da rampa. Espere os updates e confirme também depois de repô-la.
+          await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+          this.log('repondo_rampa', { position: previousRail.position, item: previousRail.name, support, attempt });
+          await this.replace(previousRail.position, previousRail.name);
+          await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+          if (this.blockAt(previousRail.position)?.name === previousRail.name) break;
+          if (attempt === PLACE_ATTEMPTS) {
+            throw new RailwayError(`a rampa em ${format(previousRail.position)} não permaneceu apoiada após trocar o piso`, 'RAILWAY_PLACEMENT');
+          }
+        }
       }
     }
 

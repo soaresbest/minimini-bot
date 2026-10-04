@@ -366,6 +366,36 @@ test('amplia a busca quando o orçamento inicial não permite concluir o plano',
   assert.equal(path.length, 5);
 });
 
+for (const { name, rail, previousY, allowed } of [
+  { name: 'redireciona trilho comum próprio quando a saída planejada termina em beco', rail: 'rail', previousY: 64, allowed: true },
+  { name: 'preserva a saída de trilho eletrificado mesmo quando há desvio lateral', rail: 'powered_rail', previousY: 64, allowed: false },
+  { name: 'recusa redirecionar trilho comum na parte baixa de uma rampa descendente', rail: 'rail', previousY: 65, allowed: false },
+]) {
+  test(name, () => {
+    const columns = new Set(['0,0', '0,-1', '0,1', '1,0', '2,0', '3,0']);
+    const start = { x: 0, y: 64, z: 0 };
+    const { task } = terrainRun(({ x, y, z }) => {
+      if (x === 0 && y === 64 && z === 0) return rail;
+      const floorY = x === 0 && z === 1 ? previousY - 1 : 63;
+      return columns.has(`${x},${z}`) && y <= floorY ? 'stone' : 'air';
+    });
+    task.completedRailColumns.set('0,0', 64);
+    const plan = () => task.planTerrainPath({
+      start, previous: { x: 0, y: previousY, z: 1 }, goal: { x: 3, y: 64, z: 0 },
+      forcedFirst: { x: 0, y: 64, z: -1 },
+      blocked: (x, z) => x === 0 && z === 1,
+      heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
+    });
+
+    if (allowed) {
+      assert.deepEqual(plan(), Array.from({ length: 4 }, (_, x) => ({ x, y: 64, z: 0 })),
+        'após esgotar a saída norte, faz a curva plana para o leste sem reutilizar o trecho anterior');
+    } else {
+      assert.throws(plan, error => error.code === 'RAILWAY_NO_ROUTE');
+    }
+  });
+}
+
 test('coordenadas automáticas usam a posição atual e aceitam qualquer Y no destino', async () => {
   const task = new RailwayTask({ bot: { entity: { position: new Vec3(4.5, 71.8, 9.5) } } }, new AbortController().signal);
   const built = [];

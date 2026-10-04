@@ -139,7 +139,8 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, liquid = 'wa
     },
   };
   const task = new RailwayTask(controller, new AbortController().signal);
-  return { task, get, placed, dug, invalidPlacements, refusedPlacements, items, updatePhysics, flushServerUpdates };
+  return { task, get, placed, dug, invalidPlacements, refusedPlacements, items, updatePhysics, flushServerUpdates,
+    applyServerBlock: put };
 }
 
 function assertTrack(world, position, previous) {
@@ -440,3 +441,41 @@ for (const previousRail of ['rail', 'powered_rail']) {
     assert.deepEqual(world.placed, []);
   });
 }
+
+test('repõe novamente a rampa quando uma atualização tardia a remove após a primeira restauração', async () => {
+  const previous = new Vec3(0, 64, 0);
+  const position = new Vec3(1, 65, 0);
+  const support = position.offset(0, -1, 0);
+  const world = railwayWorld({
+    blocks: [[previous, 'rail', 'ascending_east'], [previous.offset(0, -1, 0), 'stone'],
+      [support, 'grass_block'], [support.offset(0, -1, 0), 'stone']],
+    botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
+  });
+  const place = world.task.bot._placeBlockWithOptions;
+  const update = Promise.withResolvers();
+  let restores = 0;
+  let timer;
+  world.task.bot._placeBlockWithOptions = async (reference, face) => {
+    await place(reference, face);
+    if (reference.position.plus(face).equals(previous) && ++restores === 1) {
+      timer = setTimeout(() => {
+        world.applyServerBlock(previous, 'air');
+        update.resolve();
+      }, 50);
+    }
+  };
+
+  try {
+    await world.task.buildCell({ index: 1, position, previous, powered: true, slope: true });
+    assert.ok(restores >= 1, 'a rampa foi recolocada depois da troca do apoio');
+    await update.promise;
+
+    assert.equal(world.get(previous).name, 'rail', 'a rampa continua presente depois da atualização tardia');
+    assert.equal(restores, 2, 'detecta o desaparecimento e faz nova colocação');
+    assert.equal(world.get(support).name, 'redstone_block');
+    assert.equal(world.get(position).name, 'powered_rail');
+    assert.deepEqual(world.invalidPlacements, []);
+  } finally {
+    clearTimeout(timer);
+  }
+});
