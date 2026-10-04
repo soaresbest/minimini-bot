@@ -16,7 +16,6 @@ const PLACE_RETRY_MS = 200;
 const SUPPORT_MAX_BLOCKS = 3;
 const AIR = new Set(['air', 'cave_air', 'void_air']);
 const LIQUID = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
-const LAVA = new Set(['lava', 'flowing_lava']);
 const RAILS = new Set(['rail', 'powered_rail', 'detector_rail', 'activator_rail']);
 const FALLING_SUPPORTS = new Set(['sand', 'red_sand', 'gravel']);
 const MATERIAL_BATCH = Object.freeze({ rail: 64, powered_rail: 32, redstone_block: 32, stone: 64 });
@@ -65,6 +64,13 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
       const z = current.z + direction.z;
       if (Math.max(Math.abs(x - start.x), Math.abs(z - start.z)) > radius) continue;
       if (blocked(x, z)) continue;
+      // A orientação faz parte do estado do A*. Sem esta checagem, uma
+      // ida-e-volta pode simular uma curva plana e reutilizar o mesmo trilho.
+      let repeatedColumn = false;
+      for (let ancestor = current; ancestor; ancestor = ancestor.parent) {
+        if (ancestor.x === x && ancestor.z === z) { repeatedColumn = true; break; }
+      }
+      if (repeatedColumn) continue;
       if (current.parent === null && forcedFirst && (x !== forcedFirst.x || z !== forcedFirst.z)) continue;
       const heights = heightsAt(x, z, current.y, current);
       for (const y of heights) {
@@ -227,11 +233,14 @@ export class RailwayTask {
   }
 
   hasClearance(x, z, y, previous = null) {
+    // Não abra um teto que está segurando água/lava sobre o corredor.
+    const ceiling = this.blockAt(new Vec3(x, y + 2, z));
+    if (!this.isPassable(ceiling) && LIQUID.has(this.blockAt(new Vec3(x, y + 3, z))?.name)) return false;
     if (DIRECTIONS.some(direction => [0, 1, 2].some(height => {
       const point = new Vec3(x + direction.x, y + height, z + direction.z);
       // O piso do passo anterior já terá sido substituído antes da descida.
       if (previous && point.x === previous.x && point.z === previous.z && point.y === previous.y - 1) return false;
-      return LAVA.has(this.blockAt(point)?.name);
+      return LIQUID.has(this.blockAt(point)?.name);
     }))) return false;
     return [0, 1, 2].every(offset => {
       const block = this.blockAt(new Vec3(x, y + offset, z));
