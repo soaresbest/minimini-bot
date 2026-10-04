@@ -1,51 +1,66 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vec3Package from 'vec3';
-import { RailRoute, RailwayError, RailwayTask, planRailSegment } from '../src/railway.js';
+import { RailwayError, RailwayTask, findTerrainPath } from '../src/railway.js';
 
 const { Vec3 } = vec3Package;
 
-test('rota de trilhos conecta os pontos com passos ortogonais e inclinação segura', () => {
-  const route = new RailRoute({ x: 0, y: 64, z: 0 }, { x: 12, y: 68, z: -5 });
-  assert.equal(route.length, 17);
-  assert.deepEqual(route.positionAt(0), { x: 0, y: 64, z: 0 });
-  assert.deepEqual(route.positionAt(route.length), { x: 12, y: 68, z: -5 });
-  for (let index = 1; index <= route.length; index++) {
-    const previous = route.positionAt(index - 1);
-    const current = route.positionAt(index);
-    assert.equal(Math.abs(current.x - previous.x) + Math.abs(current.z - previous.z), 1);
-    assert.ok(Math.abs(current.y - previous.y) <= 1);
+test('A* acompanha terreno plano e rampas de um bloco', () => {
+  const heights = new Map([['1,0', 65], ['2,0', 66], ['3,0', 66], ['4,0', 65]]);
+  const path = findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 65, z: 0 },
+    heightsAt: (x, z, currentY) => {
+      const y = heights.get(`${x},${z}`) ?? 64;
+      return Math.abs(y - currentY) <= 1 ? [y] : [];
+    },
+  });
+  assert.deepEqual(path, [
+    { x: 0, y: 64, z: 0 }, { x: 1, y: 65, z: 0 }, { x: 2, y: 66, z: 0 },
+    { x: 3, y: 66, z: 0 }, { x: 4, y: 65, z: 0 },
+  ]);
+});
+
+test('A* contorna degrau de dois blocos e mantém a curva plana', () => {
+  const path = findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 64, z: 0 },
+    heightsAt: (x, z, currentY) => {
+      const y = x === 2 && z === 0 ? 67 : 64;
+      return Math.abs(y - currentY) <= 1 ? [y] : [];
+    },
+  });
+  assert.ok(!path.some(point => point.x === 2 && point.z === 0));
+  assert.ok(path.some(point => point.z !== 0));
+  for (let index = 1; index < path.length - 1; index++) {
+    const before = path[index - 1];
+    const current = path[index];
+    const after = path[index + 1];
+    const turn = before.x - current.x !== current.x - after.x || before.z - current.z !== current.z - after.z;
+    if (turn) assert.equal(before.y, after.y);
   }
-  assert.equal(route.positionAt(route.turn - 1).y, route.positionAt(route.turn).y);
-  assert.equal(route.positionAt(route.turn).y, route.positionAt(route.turn + 1).y);
 });
 
-test('planejamento é incremental, inicia e termina energizado e reduz intervalos em rampas', () => {
-  const route = new RailRoute({ x: 0, y: 64, z: 0 }, { x: 30, y: 72, z: 0 });
-  const first = planRailSegment(route, 0, 10);
-  const second = planRailSegment(route, first.nextIndex, 10, first.lastPowered);
-  const third = planRailSegment(route, second.nextIndex, 20, second.lastPowered);
-  const cells = [...first.cells, ...second.cells, ...third.cells];
-  assert.equal(cells[0].powered, true);
-  assert.equal(cells.at(-1).powered, true);
-  const powered = cells.filter(cell => cell.powered).map(cell => cell.index);
-  assert.ok(powered.slice(1).every((index, position) => index - powered[position] <= 8));
-  for (const cell of cells.filter(cell => cell.slope && !cell.corner)) {
-    const previousPowered = powered.filter(index => index <= cell.index).at(-1);
-    assert.ok(cell.index - previousPowered <= 3);
-  }
+test('A* informa quando não há alternativa dentro da área pesquisada', () => {
+  assert.throws(() => findTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 3, y: 64, z: 0 }, radius: 2,
+    heightsAt: (x, _z, currentY) => x === 1 ? [] : [currentY],
+  }), RailwayError);
 });
 
-test('não aceita subida vertical nem curva inclinada impossível', () => {
-  assert.throws(() => new RailRoute({ x: 0, y: 64, z: 0 }, { x: 0, y: 65, z: 0 }), RailwayError);
-  assert.throws(() => new RailRoute({ x: 0, y: 64, z: 0 }, { x: 1, y: 65, z: 1 }), /íngreme/u);
-});
-
-test('rota longa é consultada sem materializar todos os blocos', () => {
-  const route = new RailRoute({ x: -29_000_000, y: 64, z: 0 }, { x: 29_000_000, y: 64, z: 0 });
-  assert.equal(route.length, 58_000_000);
-  assert.deepEqual(route.positionAt(57_999_999), { x: 28_999_999, y: 64, z: 0 });
-  assert.equal(planRailSegment(route, 40_000_000).cells.length, 24);
+test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () => {
+  const ground = new Map([[1, 64], [2, 62], [3, 65], [4, 61]]);
+  const bot = {
+    blockAt: ({ x, y, z }) => {
+      assert.equal(z, 0);
+      const top = ground.get(x) ?? 63;
+      return { name: y <= top ? 'stone' : 'air', boundingBox: y <= top ? 'block' : 'empty', position: new Vec3(x, y, z) };
+    },
+    canDigBlock: () => true,
+  };
+  const task = new RailwayTask({ bot }, new AbortController().signal);
+  assert.deepEqual(task.terrainRailHeights(1, 0, 64), [65]);
+  assert.deepEqual(task.terrainRailHeights(2, 0, 64), [63]);
+  assert.deepEqual(task.terrainRailHeights(3, 0, 64), []);
+  assert.deepEqual(task.terrainRailHeights(4, 0, 64), []);
 });
 
 test('reposição por comando é opt-in e usa somente comando e material fixos', async () => {

@@ -5,12 +5,17 @@ import { setTimeout as delay } from 'node:timers/promises';
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
 
-const SEGMENT_SIZE = 24;
+const PLAN_HORIZON = 20;
+const BUILD_BATCH = 12;
+const SEARCH_RADIUS = 32;
+const EXTENDED_SEARCH_RADIUS = 64;
+const SEARCH_NODE_LIMIT = 12_000;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
 const PLACE_RETRY_MS = 200;
 const AIR = new Set(['air', 'cave_air', 'void_air']);
 const LIQUID = new Set(['water', 'flowing_water']);
+const LAVA = new Set(['lava', 'flowing_lava']);
 const RAILS = new Set(['rail', 'powered_rail', 'detector_rail', 'activator_rail']);
 const MATERIAL_BATCH = Object.freeze({ rail: 64, powered_rail: 32, redstone_block: 32, stone: 64 });
 const FACES = Object.freeze([
@@ -28,59 +33,54 @@ export class RailwayError extends Error {
   }
 }
 
-/**
- * Representa uma rota ortogonal sem materializar distâncias potencialmente enormes.
- * A curva permanece plana, pois trilhos curvos não podem ser ascendentes.
- */
-export class RailRoute {
-  constructor(start, end) {
-    this.start = integerPosition(start, 'início');
-    this.end = integerPosition(end, 'fim');
-    this.xSteps = Math.abs(this.end.x - this.start.x);
-    this.zSteps = Math.abs(this.end.z - this.start.z);
-    this.length = this.xSteps + this.zSteps;
-    this.yDelta = this.end.y - this.start.y;
-    this.turn = this.xSteps > 0 && this.zSteps > 0 ? this.xSteps : -1;
-    this.flatSteps = new Set(this.turn < 0 ? [] : [this.turn, this.turn + 1].filter(step => step >= 1 && step <= this.length));
-    this.slopeSteps = this.length - this.flatSteps.size;
-    if (this.length === 0 && this.yDelta !== 0) throw new RailwayError('início e fim verticais exigem pelo menos um bloco de avanço horizontal');
-    if (Math.abs(this.yDelta) > this.slopeSteps) {
-      throw new RailwayError('a inclinação é íngreme demais para trilhos, inclusive na curva plana');
+const DIRECTIONS = Object.freeze([
+  { x: 1, z: 0, name: 'east' }, { x: -1, z: 0, name: 'west' },
+  { x: 0, z: 1, name: 'south' }, { x: 0, z: -1, name: 'north' },
+]);
+
+/** Busca A* respeitando rampas de um bloco e a geometria plana das curvas. */
+export function findTerrainPath({ start, goal, heightsAt, previous = null, forcedFirst = null,
+  goalDistance = 0, radius = SEARCH_RADIUS, maxNodes = SEARCH_NODE_LIMIT }) {
+  start = integerPosition(start, 'início do trecho');
+  goal = { ...integerPosition({ ...goal, y: goal.y ?? start.y }, 'objetivo do trecho'), y: goal.y ?? null };
+  const initialDirection = previous ? directionBetween(previous, start) : null;
+  const initialSlope = previous ? start.y - previous.y : 0;
+  const initial = { ...start, direction: initialDirection, slope: initialSlope, g: 0, parent: null };
+  const open = new MinHeap((a, b) => a.f - b.f);
+  const best = new Map([[stateKey(initial), 0]]);
+  open.push({ ...initial, f: heuristic(initial, goal, goalDistance) });
+  let visited = 0;
+
+  while (open.size) {
+    const current = open.pop();
+    if (current.g !== best.get(stateKey(current))) continue;
+    if (reachedGoal(current, goal, goalDistance)) return reconstruct(current);
+    if (++visited > maxNodes) break;
+
+    const directions = [...DIRECTIONS].sort((a, b) => directionHeuristic(current, a, goal) - directionHeuristic(current, b, goal));
+    for (const direction of directions) {
+      const x = current.x + direction.x;
+      const z = current.z + direction.z;
+      if (Math.max(Math.abs(x - start.x), Math.abs(z - start.z)) > radius) continue;
+      if (current.parent === null && forcedFirst && (x !== forcedFirst.x || z !== forcedFirst.z)) continue;
+      const heights = heightsAt(x, z, current.y);
+      for (const y of heights) {
+        if (!Number.isInteger(y) || Math.abs(y - current.y) > 1) continue;
+        if (current.parent === null && forcedFirst && y !== forcedFirst.y) continue;
+        const slope = y - current.y;
+        const turning = current.direction && current.direction !== direction.name;
+        if (turning && (current.slope !== 0 || slope !== 0)) continue;
+        if (current.slope !== 0 && slope !== 0 && current.slope !== slope) continue;
+        const g = current.g + 1 + Math.abs(slope) * 0.75 + (turning ? 0.2 : 0);
+        const next = { x, y, z, direction: direction.name, slope, g, parent: current };
+        const key = stateKey(next);
+        if (g >= (best.get(key) ?? Infinity)) continue;
+        best.set(key, g);
+        open.push({ ...next, f: g + heuristic(next, goal, goalDistance) });
+      }
     }
   }
-
-  positionAt(index) {
-    if (!Number.isInteger(index) || index < 0 || index > this.length) throw new RangeError('Índice fora da rota.');
-    const xDone = Math.min(index, this.xSteps);
-    const zDone = Math.max(0, index - this.xSteps);
-    const eligible = index - [...this.flatSteps].filter(step => step <= index).length;
-    const rises = this.slopeSteps ? Math.floor(eligible * Math.abs(this.yDelta) / this.slopeSteps) : 0;
-    return {
-      x: this.start.x + Math.sign(this.end.x - this.start.x) * xDone,
-      y: this.start.y + Math.sign(this.yDelta) * rises,
-      z: this.start.z + Math.sign(this.end.z - this.start.z) * zDone,
-    };
-  }
-
-  isCorner(index) { return index === this.turn; }
-}
-
-/** Planeja só o próximo trecho e carrega o estado de impulso para o seguinte. */
-export function planRailSegment(route, fromIndex, limit = SEGMENT_SIZE, lastPowered = -Infinity) {
-  const cells = [];
-  const end = Math.min(route.length, fromIndex + limit - 1);
-  for (let index = fromIndex; index <= end; index++) {
-    const position = route.positionAt(index);
-    const previous = index > 0 ? route.positionAt(index - 1) : null;
-    const next = index < route.length ? route.positionAt(index + 1) : null;
-    const slope = previous?.y !== position.y || next?.y !== position.y;
-    const maximumGap = slope ? 3 : 8;
-    const endpoint = index === route.length;
-    const powered = index === 0 || (!route.isCorner(index) && (index - lastPowered >= maximumGap || endpoint));
-    if (powered) lastPowered = index;
-    cells.push({ index, position, powered, slope, corner: route.isCorner(index) });
-  }
-  return { cells, lastPowered, nextIndex: end + 1 };
+  throw new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco');
 }
 
 export class RailwayTask {
@@ -93,23 +93,75 @@ export class RailwayTask {
 
   async run(action) {
     this.allowCommands = action.allowCommands;
-    const route = new RailRoute(
-      { x: action.startX, y: action.startY, z: action.startZ },
-      { x: action.endX, y: action.endY, z: action.endZ },
-    );
-    let index = 0;
-    let lastPowered = -Infinity;
-    while (index <= route.length) {
+    const start = integerPosition({ x: action.startX, y: action.startY, z: action.startZ }, 'início');
+    const end = integerPosition({ x: action.endX, y: action.endY, z: action.endZ }, 'fim');
+    let current = start;
+    let previous = null;
+    let forcedFirst = null;
+    let built = 0;
+    let lastPowered = 0;
+    await this.buildCell({ index: 0, position: start, powered: true });
+
+    while (!samePosition(current, end)) {
       this.signal.throwIfAborted();
-      const segment = planRailSegment(route, index, SEGMENT_SIZE, lastPowered);
-      for (const cell of segment.cells) {
+      const remaining = horizontalDistance(current, end);
+      const finalSegment = remaining <= PLAN_HORIZON;
+      const path = this.planTerrainPath({
+        start: current,
+        goal: end,
+        previous,
+        forcedFirst,
+        goalDistance: finalSegment ? 0 : remaining - PLAN_HORIZON,
+        heightsAt: (x, z, y) => this.terrainRailHeights(x, z, y),
+      });
+      const count = Math.min(BUILD_BATCH, path.length - 1);
+      if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
+      for (let offset = 1; offset <= count; offset++) {
         this.signal.throwIfAborted();
-        this.controller.task = `construindo trilhos ${cell.index + 1}/${route.length + 1}`;
+        const position = path[offset];
+        const next = path[offset + 1] ?? null;
+        const index = ++built;
+        const slope = current.y !== position.y || next?.y !== position.y;
+        const corner = isCorner(current, position, next);
+        const endpoint = samePosition(position, end);
+        const maximumGap = slope ? 3 : 8;
+        const powered = !corner && (endpoint || index - lastPowered >= maximumGap);
+        if (powered) lastPowered = index;
+        const cell = { index, position, powered, slope, corner };
+        this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
         await this.buildCell(cell);
+        previous = current;
+        current = position;
       }
-      index = segment.nextIndex;
-      lastPowered = segment.lastPowered;
+      forcedFirst = path[count + 1] ?? null;
     }
+  }
+
+  planTerrainPath(options) {
+    try {
+      return findTerrainPath(options);
+    } catch (error) {
+      if (!(error instanceof RailwayError)) throw error;
+      return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: SEARCH_NODE_LIMIT * 3 });
+    }
+  }
+
+  terrainRailHeights(x, z, currentY) {
+    const at = y => this.blockAt(new Vec3(x, y, z));
+    const passable = block => Boolean(block && !LAVA.has(block.name)
+      && (AIR.has(block.name) || LIQUID.has(block.name) || RAILS.has(block.name) || block.boundingBox === 'empty'));
+    const solid = block => this.isSolid(block) && !RAILS.has(block.name);
+    const clearance = y => [0, 1, 2].every(offset => {
+      const block = at(y + offset);
+      // canDigBlock também mede o alcance atual; durante o planejamento basta
+      // excluir blocos realmente inquebráveis, pois o bot se aproximará depois.
+      return passable(block) || Boolean(block && block.diggable !== false);
+    });
+    if (solid(at(currentY)) && passable(at(currentY + 1)) && clearance(currentY + 1)) return [currentY + 1];
+    if (passable(at(currentY)) && (solid(at(currentY - 1)) || LIQUID.has(at(currentY)?.name)
+      || LIQUID.has(at(currentY - 1)?.name)) && clearance(currentY)) return [currentY];
+    if (passable(at(currentY - 1)) && solid(at(currentY - 2)) && clearance(currentY - 1)) return [currentY - 1];
+    return [];
   }
 
   async buildCell(cell) {
@@ -225,6 +277,76 @@ function integerPosition(value, label) {
     throw new RailwayError(`a posição de ${label} deve usar coordenadas inteiras`);
   }
   return { x: value.x, y: value.y, z: value.z };
+}
+
+function reachedGoal(position, goal, goalDistance) {
+  const horizontal = horizontalDistance(position, goal);
+  if (horizontal > goalDistance) return false;
+  return goalDistance > 0 || goal.y === null || position.y === goal.y;
+}
+
+function heuristic(position, goal, goalDistance) {
+  const horizontal = Math.max(0, horizontalDistance(position, goal) - goalDistance);
+  return horizontal + (goalDistance === 0 && goal.y !== null ? Math.abs(position.y - goal.y) * 0.75 : 0);
+}
+
+function directionHeuristic(position, direction, goal) {
+  return Math.abs(position.x + direction.x - goal.x) + Math.abs(position.z + direction.z - goal.z);
+}
+
+function stateKey(state) { return `${state.x},${state.y},${state.z},${state.direction ?? '-'},${state.slope}`; }
+
+function reconstruct(last) {
+  const path = [];
+  for (let state = last; state; state = state.parent) path.push({ x: state.x, y: state.y, z: state.z });
+  return path.reverse();
+}
+
+function directionBetween(from, to) {
+  const direction = DIRECTIONS.find(candidate => from.x + candidate.x === to.x && from.z + candidate.z === to.z);
+  if (!direction) throw new RailwayError('o trecho anterior não é adjacente ao planejamento atual');
+  return direction.name;
+}
+
+function isCorner(previous, current, next) {
+  if (!previous || !next) return false;
+  return directionBetween(previous, current) !== directionBetween(current, next);
+}
+
+function samePosition(a, b) { return a.x === b.x && a.y === b.y && a.z === b.z; }
+function horizontalDistance(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.z - b.z); }
+
+class MinHeap {
+  constructor(compare) { this.values = []; this.compare = compare; }
+  get size() { return this.values.length; }
+  push(value) {
+    this.values.push(value);
+    for (let index = this.values.length - 1; index > 0;) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.compare(this.values[parent], value) <= 0) break;
+      this.values[index] = this.values[parent];
+      index = parent;
+      this.values[index] = value;
+    }
+  }
+  pop() {
+    const first = this.values[0];
+    const last = this.values.pop();
+    if (this.values.length && last) {
+      this.values[0] = last;
+      for (let index = 0;;) {
+        const left = index * 2 + 1;
+        const right = left + 1;
+        let smallest = index;
+        if (left < this.values.length && this.compare(this.values[left], this.values[smallest]) < 0) smallest = left;
+        if (right < this.values.length && this.compare(this.values[right], this.values[smallest]) < 0) smallest = right;
+        if (smallest === index) break;
+        [this.values[index], this.values[smallest]] = [this.values[smallest], this.values[index]];
+        index = smallest;
+      }
+    }
+    return first;
+  }
 }
 
 function vec(position) { return new Vec3(position.x, position.y, position.z); }
