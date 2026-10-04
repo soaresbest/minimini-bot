@@ -7,6 +7,8 @@ const { Vec3 } = vec3Package;
 
 const SEGMENT_SIZE = 24;
 const GIVE_WAIT_MS = 4_000;
+const PLACE_ATTEMPTS = 3;
+const PLACE_RETRY_MS = 200;
 const AIR = new Set(['air', 'cave_air', 'void_air']);
 const LIQUID = new Set(['water', 'flowing_water']);
 const RAILS = new Set(['rail', 'powered_rail', 'detector_rail', 'activator_rail']);
@@ -127,8 +129,8 @@ export class RailwayTask {
   }
 
   async moveNear(point) {
-    if (this.bot.entity.position.distanceTo(point) <= 4) return;
-    await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 3), this.signal);
+    if (this.bot.entity.position.distanceTo(point) <= 2.5) return;
+    await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 2), this.signal);
   }
 
   blockAt(point) { return this.bot.blockAt(point); }
@@ -160,17 +162,33 @@ export class RailwayTask {
       await this.dig(block);
       block = this.blockAt(point);
     }
-    await this.ensureMaterial(item);
-    const reference = this.findReference(point);
-    if (!reference) throw new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`);
-    const { block: referenceBlock, face } = reference;
-    await this.controller.useHand(async () => {
-      await this.bot.equip(this.inventoryItem(item), 'hand');
-      this.signal.throwIfAborted();
-      await this.bot.lookAt(referenceBlock.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
-      this.signal.throwIfAborted();
-      await this.bot._placeBlockWithOptions(referenceBlock, face, { forceLook: 'ignore', swingArm: 'right' });
-    }, this.signal);
+    for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
+      await this.ensureMaterial(item);
+      const reference = this.findReference(point);
+      if (!reference) throw new RailwayError(`não há apoio para colocar ${item} em ${format(point)}`);
+      const { block: referenceBlock, face } = reference;
+      try {
+        await this.controller.useHand(async () => {
+          await this.bot.equip(this.inventoryItem(item), 'hand');
+          this.signal.throwIfAborted();
+          await this.bot.lookAt(referenceBlock.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
+          this.signal.throwIfAborted();
+          await this.bot._placeBlockWithOptions(referenceBlock, face, { forceLook: true, swingArm: 'right' });
+        }, this.signal);
+      } catch (error) {
+        this.signal.throwIfAborted();
+        await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+        if (this.blockAt(point)?.name === item) return;
+        if (attempt === PLACE_ATTEMPTS) {
+          throw new RailwayError(`o servidor recusou colocar ${item} em ${format(point)} após ${PLACE_ATTEMPTS} tentativas`);
+        }
+        await this.moveNear(point);
+        continue;
+      }
+      if (this.blockAt(point)?.name === item) return;
+      if (attempt < PLACE_ATTEMPTS) await delay(PLACE_RETRY_MS, undefined, { signal: this.signal });
+    }
+    throw new RailwayError(`não consegui confirmar ${item} em ${format(point)}`);
   }
 
   findReference(target) {

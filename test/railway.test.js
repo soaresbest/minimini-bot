@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vec3Package from 'vec3';
 import { RailRoute, RailwayError, RailwayTask, planRailSegment } from '../src/railway.js';
+
+const { Vec3 } = vec3Package;
 
 test('rota de trilhos conecta os pontos com passos ortogonais e inclinação segura', () => {
   const route = new RailRoute({ x: 0, y: 64, z: 0 }, { x: 12, y: 68, z: -5 });
@@ -67,4 +70,30 @@ test('reposição por comando é opt-in e usa somente comando e material fixos',
   assert.deepEqual(sent, ['/give Bot1 minecraft:powered_rail 32']);
   await assert.rejects(() => task.ensureMaterial('command_block'), /segurança/u);
   assert.equal(sent.length, 1);
+});
+
+test('colocação relê o mundo e repete uma recusa transitória do servidor', async () => {
+  const target = new Vec3(0, 64, 0);
+  const support = new Vec3(0, 63, 0);
+  const blocks = new Map([
+    [target.toString(), { name: 'air', type: 0, boundingBox: 'empty', position: target }],
+    [support.toString(), { name: 'redstone_block', type: 1, boundingBox: 'block', position: support }],
+  ]);
+  let attempts = 0;
+  const bot = {
+    entity: { position: target },
+    inventory: { items: () => [{ name: 'powered_rail', count: 2, type: 2 }] },
+    blockAt: point => blocks.get(point.toString()) ?? { name: 'air', type: 0, boundingBox: 'empty', position: point },
+    equip: async () => {}, lookAt: async () => {},
+    _placeBlockWithOptions: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('Server refused to place powered_rail');
+      blocks.set(target.toString(), { name: 'powered_rail', type: 3, boundingBox: 'empty', position: target });
+    },
+  };
+  const controller = { bot, useHand: async fn => await fn() };
+  const task = new RailwayTask(controller, new AbortController().signal);
+  await task.replace(target, 'powered_rail');
+  assert.equal(attempts, 2);
+  assert.equal(bot.blockAt(target).name, 'powered_rail');
 });
