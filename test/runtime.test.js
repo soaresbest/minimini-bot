@@ -62,6 +62,25 @@ test('comando desconhecido tem resposta curta; follow rejeita jogador offline e 
   assert.match(h.said.pop(), /não um bot/);
 });
 
+test('comando de trilhos válido ou malformado nunca é enviado à IA', async t => {
+  let plannerCalls = 0;
+  const h = harness({ bots: [{ name: 'Bot1', mode: 'ia' }], llm: { providers: { openai: { apiKey: 'test-key' } } } }, {
+    planner: async () => { plannerCalls++; return { reply: 'IA', actions: [] }; }
+  });
+  t.after(h.close);
+  let actions;
+  h.controller.executePlan = async value => { actions = value; };
+
+  await h.manager.handleChat(h.controller, 'Alice', '@Bot1 trilhos(0,64,0,10,64,0,sim)');
+  assert.equal(plannerCalls, 0);
+  assert.equal(actions[0].type, 'railway');
+  assert.equal(actions[0].allowCommands, true);
+
+  await h.manager.handleChat(h.controller, 'Alice', '@Bot1 trilhos(0,64,0,10,64,0,talvez)');
+  assert.equal(plannerCalls, 0);
+  assert.match(h.said.at(-1), /Formato: railway/u);
+});
+
 test('contexto de IA inclui estado, inventário, jogadores e blocos carregados visíveis', t => {
   const h = harness(); t.after(h.close);
   const stonePosition = new Point(1, 64, 0);
