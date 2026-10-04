@@ -236,6 +236,45 @@ test('planeja o desvio antes de ultrapassar a bifurcação de um corredor sem sa
     'o desvio chega ao fim sem reutilizar colunas');
 });
 
+test('preserva um desvio longo que começa afastando-se do destino e reserva a próxima orientação', async () => {
+  const { task, built } = terrainRun(({ y }) => y <= 63 ? 'stone' : 'air');
+  const point = (x, z) => ({ x, y: 64, z });
+  const first = [
+    point(0, 0),
+    ...Array.from({ length: 4 }, (_, index) => point(-index - 1, 0)),
+    ...Array.from({ length: 4 }, (_, index) => point(-4, index + 1)),
+    ...Array.from({ length: 48 }, (_, index) => point(index - 3, 4)),
+  ];
+  const reserved = first.at(-1);
+  const second = [
+    first.at(-2), reserved,
+    ...Array.from({ length: 4 }, (_, index) => point(44, 3 - index)),
+    ...Array.from({ length: 16 }, (_, index) => point(45 + index, 0)),
+  ];
+  let plans = 0;
+  task.planTerrainPath = options => {
+    plans++;
+    if (plans === 1) return first;
+    assert.equal(plans, 2, 'consome o caminho confirmado em vez de recalcular a cada lote');
+    assert.deepEqual(built.map(cell => cell.position), first.slice(0, -1),
+      'conclui o desvio confirmado, deixando apenas o último ponto para conectar o próximo trecho');
+    assert.deepEqual(options.start, first.at(-2));
+    assert.deepEqual(options.previous, first.at(-3));
+    assert.deepEqual(options.forcedFirst, reserved, 'preserva a direção prevista pelo trilho já construído');
+    return second;
+  };
+
+  await runTo(task, { x: 60, z: 0 });
+
+  assert.equal(plans, 2);
+  assert.deepEqual(built.map(cell => cell.position), [...first.slice(0, -1), ...second.slice(1)]);
+  assert.deepEqual(built.at(-1).position, point(60, 0));
+  assert.equal(new Set(built.map(cell => `${cell.position.x},${cell.position.z}`)).size, built.length);
+  const connection = built.find(({ position }) => position.x === reserved.x && position.z === reserved.z);
+  assert.equal(connection.corner, true, 'só decide a curva do ponto reservado depois do próximo planejamento');
+  assert.equal(connection.powered, false, 'a conexão curva usa trilho comum');
+});
+
 test('cada planejamento consulta cada bloco uma vez e relê alterações do mundo no próximo plano', () => {
   let wall = false;
   const { task } = terrainRun(({ x, y, z }) => {

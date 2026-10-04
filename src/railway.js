@@ -123,6 +123,7 @@ export class RailwayTask {
     let current = start;
     let previous = null;
     let forcedFirst = null;
+    let plannedPath = null;
     let built = 0;
     let lastPowered = 0;
     const builtColumns = new Set([columnKey(start)]);
@@ -134,24 +135,33 @@ export class RailwayTask {
       while (!samePosition(current, end)) {
         this.signal.throwIfAborted();
         const remaining = horizontalDistance(current, end);
-        const finalSegment = remaining <= PLAN_HORIZON;
-        const planStarted = Date.now();
-        const path = this.planTerrainPath({
-          start: current,
-          goal: end,
-          previous,
-          forcedFirst,
-          blocked: (x, z) => builtColumns.has(`${x},${z}`),
-          goalDistance: finalSegment ? 0 : remaining - PLAN_HORIZON,
-          heightsAt: (x, z, y, from) => this.terrainRailHeights(x, z, y, from),
-          costAt: (x, y, z) => LIQUID.has(this.blockAt(new Vec3(x, y - 1, z))?.name) ? 2 : 0,
-        });
-        this.log('plano', {
-          from: current, to: path.at(-1), steps: path.length - 1, remaining,
-          minY: Math.min(...path.map(point => point.y)), maxY: Math.max(...path.map(point => point.y)),
-          durationMs: Date.now() - planStarted, path,
-        });
-        const count = Math.min(BUILD_BATCH, path.length - 1);
+        if (!plannedPath || plannedPath.length <= 2) {
+          const planStarted = Date.now();
+          plannedPath = this.planTerrainPath({
+            start: current,
+            goal: end,
+            previous,
+            forcedFirst,
+            blocked: (x, z) => builtColumns.has(`${x},${z}`),
+            goalDistance: remaining <= PLAN_HORIZON ? 0 : remaining - PLAN_HORIZON,
+            heightsAt: (x, z, y, from) => this.terrainRailHeights(x, z, y, from),
+            costAt: (x, y, z) => LIQUID.has(this.blockAt(new Vec3(x, y - 1, z))?.name) ? 2 : 0,
+          });
+          this.log('plano', {
+            from: current, to: plannedPath.at(-1), steps: plannedPath.length - 1, remaining,
+            minY: Math.min(...plannedPath.map(point => point.y)), maxY: Math.max(...plannedPath.map(point => point.y)),
+            durationMs: Date.now() - planStarted, path: plannedPath,
+          });
+        } else {
+          this.log('continuando_desvio', { from: current, to: plannedPath.at(-1), steps: plannedPath.length - 1 });
+        }
+        // Um desvio pode começar se afastando do destino. Não troque sua saída
+        // por uma nova meta "40 blocos mais perto" a cada lote: isso faria o
+        // bot voltar ao obstáculo. Reserve a última posição para conhecer a
+        // orientação do próximo trilho antes de terminar o trecho atual.
+        const path = plannedPath;
+        const reserve = samePosition(path.at(-1), end) ? 0 : 1;
+        const count = Math.min(BUILD_BATCH, path.length - 1 - reserve);
         if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
         let builtOffset = 0;
         for (let offset = 1; offset <= count; offset++) {
@@ -174,6 +184,7 @@ export class RailwayTask {
           builtOffset = offset;
         }
         forcedFirst = path[builtOffset + 1] ?? null;
+        plannedPath = path.slice(builtOffset);
       }
       this.log('concluido', { position: current, blocks: built + 1, durationMs: Date.now() - startedAt });
     } catch (error) {
