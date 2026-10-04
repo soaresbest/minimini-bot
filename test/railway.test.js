@@ -236,6 +236,52 @@ test('planeja o desvio antes de ultrapassar a bifurcação de um corredor sem sa
     'o desvio chega ao fim sem reutilizar colunas');
 });
 
+test('cada planejamento consulta cada bloco uma vez e relê alterações do mundo no próximo plano', () => {
+  let wall = false;
+  const { task } = terrainRun(({ x, y, z }) => {
+    if (wall && x === 1 && z === 0 && y <= 66) return 'stone';
+    return y <= 63 ? 'stone' : 'air';
+  });
+  const readBlock = task.bot.blockAt;
+  const reads = new Map();
+  task.bot.blockAt = position => {
+    const key = `${position.x},${position.y},${position.z}`;
+    reads.set(key, (reads.get(key) ?? 0) + 1);
+    return readBlock(position);
+  };
+  const options = {
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 64, z: 0 },
+    heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
+  };
+
+  const first = task.planTerrainPath(options);
+
+  assert.ok(first.some(({ x, z }) => x === 1 && z === 0));
+  assert.ok(reads.size > 0);
+  assert.ok([...reads.values()].every(count => count === 1), 'reutiliza consultas dentro do mesmo planejamento');
+
+  wall = true;
+  assert.equal(task.blockAt(new Vec3(1, 64, 0)).name, 'stone', 'fora do planejamento a leitura já vê a parede nova');
+  reads.clear();
+  const second = task.planTerrainPath(options);
+
+  assert.ok(!second.some(({ x, z }) => x === 1 && z === 0), 'o próximo plano não reutiliza o corredor antigo');
+  assert.ok(second.some(({ z }) => z !== 0), 'encontra o desvio ao redor da parede nova');
+  assert.ok(reads.size > 0);
+  assert.ok([...reads.values()].every(count => count === 1));
+});
+
+test('amplia a busca quando o orçamento inicial não permite concluir o plano', () => {
+  const { task } = terrainRun(({ y }) => y <= 63 ? 'stone' : 'air');
+  const path = task.planTerrainPath({
+    start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 64, z: 0 }, maxNodes: 1,
+    heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
+  });
+
+  assert.deepEqual(path.at(-1), { x: 4, y: 64, z: 0 });
+  assert.equal(path.length, 5);
+});
+
 test('coordenadas automáticas usam a posição atual e aceitam qualquer Y no destino', async () => {
   const task = new RailwayTask({ bot: { entity: { position: new Vec3(4.5, 71.8, 9.5) } } }, new AbortController().signal);
   const built = [];

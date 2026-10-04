@@ -10,6 +10,7 @@ const BUILD_BATCH = 12;
 const SEARCH_RADIUS = 64;
 const EXTENDED_SEARCH_RADIUS = 96;
 const SEARCH_NODE_LIMIT = 12_000;
+const EXTENDED_SEARCH_NODE_LIMIT = 120_000;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
 const PLACE_RETRY_MS = 200;
@@ -203,18 +204,27 @@ export class RailwayTask {
   }
 
   planTerrainPath(options) {
+    // A busca é síncrona: o mundo não muda até devolvermos o event loop.
+    // Reutilizar as leituras neste plano permite explorar desvios longos sem
+    // consultar os mesmos blocos centenas de vezes. Nunca reutilize entre lotes.
+    this.planningBlocks = new Map();
     try {
-      return findTerrainPath(options);
-    } catch (error) {
-      if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
-      this.log('ampliando_busca', { from: options.start, radius: EXTENDED_SEARCH_RADIUS, forcedFirst: options.forcedFirst });
       try {
-        return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: SEARCH_NODE_LIMIT * 3 });
-      } catch (extendedError) {
-        if (extendedError?.code !== 'RAILWAY_NO_ROUTE') throw extendedError;
-        this.log('sem_rota', { from: options.start, surroundings: this.describeTerrain(options.start) });
-        throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; rampas precisam variar no máximo um bloco por posição`, 'RAILWAY_NO_ROUTE');
+        return findTerrainPath(options);
+      } catch (error) {
+        if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
+        this.log('ampliando_busca', { from: options.start, radius: EXTENDED_SEARCH_RADIUS,
+          maxNodes: EXTENDED_SEARCH_NODE_LIMIT, forcedFirst: options.forcedFirst });
+        try {
+          return findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+        } catch (extendedError) {
+          if (extendedError?.code !== 'RAILWAY_NO_ROUTE') throw extendedError;
+          this.log('sem_rota', { from: options.start, surroundings: this.describeTerrain(options.start) });
+          throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; rampas precisam variar no máximo um bloco por posição`, 'RAILWAY_NO_ROUTE');
+        }
       }
+    } finally {
+      this.planningBlocks = null;
     }
   }
 
@@ -311,7 +321,12 @@ export class RailwayTask {
     await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 2), this.signal);
   }
 
-  blockAt(point) { return this.bot.blockAt(point); }
+  blockAt(point) {
+    if (!this.planningBlocks) return this.bot.blockAt(point);
+    const key = `${point.x},${point.y},${point.z}`;
+    if (!this.planningBlocks.has(key)) this.planningBlocks.set(key, this.bot.blockAt(point));
+    return this.planningBlocks.get(key);
+  }
   isSolid(block) { return Boolean(block && block.boundingBox !== 'empty' && !LIQUID.has(block.name)); }
 
   async clear(point) {
