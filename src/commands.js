@@ -1,8 +1,8 @@
 export const PLAYER_NAME = /^[A-Za-z0-9_]{1,16}$/;
 
 export const HELP = [
-  'goto(x,y,z), follow(player), guard(player), railway(x1,y1,z1,x2,y2,z2,sim|nao), stop, status, help, mode(ia|default)',
-  'railway/trilhos: sim/true/comandos permite /give; nao/false/inventario usa somente o inventário.',
+  'goto(x,y,z), follow(player), guard(player), railway(x1,y1,z1,x2,y2,z2,true|false), stop, status, help, mode(ia|default)',
+  'railway/trilhos: use ~ em y para altura automática; true permite /give e false usa só o inventário.',
   'bots, botadd(nome[,default|ia[,provedor]]), botremove(nome), botconfig(nome,mode|provider|model,valor)',
   'Exemplo: @bot1 goto(100,60,300). IA: @bot1 venha até mim. Provedores: openai, gemini, grok, claude.'
 ];
@@ -24,17 +24,15 @@ export function parseCommand(text) {
     const [x, y, z] = args.map(Number);
     if (Math.abs(x) <= 29999984 && Math.abs(z) <= 29999984 && y >= -64 && y <= 319) return { type, x, y, z };
   }
-  if (['railway', 'trilho', 'trilhos'].includes(type) && args.length === 7 && args.slice(0, 6).every(x => /^-?\d+$/.test(x))) {
-    const values = args.slice(0, 6).map(Number);
-    const permission = args[6].toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
-    const allow = new Set(['true', 'sim', 'yes', '1', 'comandos', 'commands']);
-    const deny = new Set(['false', 'nao', 'no', '0', 'inventario', 'inventory']);
-    if (values.every((value, index) => Math.abs(value) <= (index % 3 === 1 ? 319 : 29999984))
-      && (allow.has(permission) || deny.has(permission))) {
-      const [startX, startY, startZ, endX, endY, endZ] = values;
-      if (startY >= -64 && startY <= 319 && endY >= -64 && endY <= 319) {
-        return { type: 'railway', startX, startY, startZ, endX, endY, endZ, allowCommands: allow.has(permission) };
-      }
+  if (['railway', 'trilho', 'trilhos'].includes(type) && args.length === 7) {
+    const coordinates = args.slice(0, 6);
+    const validCoordinates = coordinates.every((value, index) => /^-?\d+$/.test(value) || ([1, 4].includes(index) && value === '~'));
+    const permission = args[6].toLowerCase();
+    if (validCoordinates && ['true', 'false'].includes(permission)) {
+      const [startX, startY, startZ, endX, endY, endZ] = coordinates.map(value => value === '~' ? null : Number(value));
+      const horizontal = [startX, startZ, endX, endZ].every(value => Math.abs(value) <= 29999984);
+      const vertical = [startY, endY].every(value => value === null || (value >= -64 && value <= 319));
+      if (horizontal && vertical) return { type: 'railway', startX, startY, startZ, endX, endY, endZ, allowCommands: permission === 'true' };
     }
   }
   if (['follow', 'guard'].includes(type) && args.length === 1 && PLAYER_NAME.test(args[0])) return { type, player: args[0] };

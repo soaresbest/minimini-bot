@@ -60,6 +60,14 @@ test('fallback cria passagem plana de pedra na direção do destino', () => {
   }).position, { x: 2, y: 64, z: 1 });
 });
 
+test('altura automática usa o Y atual no início e aceita qualquer Y no destino', async () => {
+  const task = new RailwayTask({ bot: { entity: { position: new Vec3(4.5, 71.8, 9.5) } } }, new AbortController().signal);
+  const built = [];
+  task.buildCell = async cell => built.push(cell);
+  await task.run({ startX: 4, startY: null, startZ: 9, endX: 4, endY: null, endZ: 9, allowCommands: false });
+  assert.deepEqual(built, [{ index: 0, position: { x: 4, y: 71, z: 9 }, powered: true }]);
+});
+
 test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () => {
   const ground = new Map([[1, 64], [2, 62], [3, 65], [4, 61]]);
   const bot = {

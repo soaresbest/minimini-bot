@@ -102,7 +102,7 @@ export function stoneFallbackStep({ current, end, previous = null, forcedFirst =
   }
   if (!direction) throw new RailwayError('não consegui definir a direção da passagem de pedra');
   const position = { x: current.x + direction.x, y: current.y, z: current.z + direction.z };
-  if (position.x === end.x && position.z === end.z && position.y !== end.y) {
+  if (position.x === end.x && position.z === end.z && end.y !== null && position.y !== end.y) {
     throw new RailwayError('a passagem plana chegou ao destino horizontal, mas a altura final é diferente');
   }
   const endpoint = samePosition(position, end);
@@ -120,8 +120,10 @@ export class RailwayTask {
 
   async run(action) {
     this.allowCommands = action.allowCommands;
-    const start = integerPosition({ x: action.startX, y: action.startY, z: action.startZ }, 'início');
-    const end = integerPosition({ x: action.endX, y: action.endY, z: action.endZ }, 'fim');
+    const currentY = Math.floor(this.bot.entity.position.y);
+    const start = integerPosition({ x: action.startX, y: action.startY ?? currentY, z: action.startZ }, 'início');
+    const validatedEnd = integerPosition({ x: action.endX, y: action.endY ?? currentY, z: action.endZ }, 'fim');
+    const end = { ...validatedEnd, y: action.endY === null ? null : validatedEnd.y };
     let current = start;
     let previous = null;
     let forcedFirst = null;
@@ -357,7 +359,7 @@ function isCorner(previous, current, next) {
   return directionBetween(previous, current) !== directionBetween(current, next);
 }
 
-function samePosition(a, b) { return a.x === b.x && a.y === b.y && a.z === b.z; }
+function samePosition(a, b) { return a.x === b.x && a.z === b.z && (a.y === b.y || a.y === null || b.y === null); }
 function horizontalDistance(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.z - b.z); }
 
 class MinHeap {

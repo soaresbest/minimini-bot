@@ -71,7 +71,7 @@ test('comando de trilhos válido ou malformado nunca é enviado à IA', async t 
   let actions;
   h.controller.executePlan = async value => { actions = value; };
 
-  await h.manager.handleChat(h.controller, 'Alice', '@Bot1 trilhos(0,64,0,10,64,0,sim)');
+  await h.manager.handleChat(h.controller, 'Alice', '@Bot1 trilhos(0,64,0,10,64,0,true)');
   assert.equal(plannerCalls, 0);
   assert.equal(actions[0].type, 'railway');
   assert.equal(actions[0].allowCommands, true);

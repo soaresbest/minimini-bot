@@ -19,12 +19,13 @@ test('parser valida tipos, argumentos, limites e comandos administrativos', () =
   assert.deepEqual(parseCommand('railway(0,64,0,100,70,-20,true)'), {
     type: 'railway', startX: 0, startY: 64, startZ: 0, endX: 100, endY: 70, endZ: -20, allowCommands: true
   });
-  assert.deepEqual(parseCommand('trilhos(0,64,0,10,64,0,inventario)'), {
+  assert.deepEqual(parseCommand('trilhos(0,64,0,10,64,0,false)'), {
     type: 'railway', startX: 0, startY: 64, startZ: 0, endX: 10, endY: 64, endZ: 0, allowCommands: false
   });
-  assert.equal(parseCommand('trilho(0,64,0,10,64,0,sim)').allowCommands, true);
-  assert.equal(parseCommand('trilhos(0,64,0,10,64,0,não)').allowCommands, false);
-  for (const command of ['goto(NaN,60,0)', 'goto(0,1e3,0)', 'goto(30000000,64,0)', 'goto(1,2)', 'railway(0,64,0,10,64,0,talvez)', 'railway(0,64,0,10.5,64,0,true)', 'follow()', 'stop(now)', 'mode(js)', 'botadd(foo,,openai)', 'botconfig(foo,apiKey,secret)', 'process.exit()', 'help;stop']) assert.equal(parseCommand(command), null, command);
+  assert.deepEqual(parseCommand('railway(-1999,~,20,2000,~,20,true)'), {
+    type: 'railway', startX: -1999, startY: null, startZ: 20, endX: 2000, endY: null, endZ: 20, allowCommands: true
+  });
+  for (const command of ['goto(NaN,60,0)', 'goto(0,1e3,0)', 'goto(30000000,64,0)', 'goto(1,2)', 'railway(0,64,0,10,64,0,sim)', 'railway(0,64,0,10,64,0,inventario)', 'railway(0,64,0,10.5,64,0,true)', 'railway(~,64,0,10,64,0,true)', 'follow()', 'stop(now)', 'mode(js)', 'botadd(foo,,openai)', 'botconfig(foo,apiKey,secret)', 'process.exit()', 'help;stop']) assert.equal(parseCommand(command), null, command);
 });
 
 test('chat limpa controles, limita pacotes e impede comandos slash', () => {
