@@ -296,6 +296,13 @@ export class RailwayTask {
       this.log('trocando_piso', { position: support, from: supportBlock.name, to: supportItem,
         reason: liquidSupport ? 'liquido' : unstableSupport ? 'gravidade' : 'alimentacao' });
       await this.ensureMaterial(supportItem);
+      const previousRail = this.isSolid(supportBlock) && cell.previous?.y === point.y - 1
+        ? this.blockAt(vec(cell.previous)) : null;
+      const restoreRamp = RAILS.has(previousRail?.name);
+      if (restoreRamp) {
+        await this.ensureMaterial(previousRail.name);
+        if (!this.bot.canDigBlock(previousRail)) throw new RailwayError(`não posso remover ${previousRail.name} em ${format(previousRail.position)}`);
+      }
       const existingRail = this.blockAt(point);
       // Retire o trilho antes de trocar o piso: o servidor pode destruir o
       // trilho pela falta de apoio depois que o cliente já o deu por pronto.
@@ -303,7 +310,14 @@ export class RailwayTask {
         if (!this.bot.canDigBlock(existingRail)) throw new RailwayError(`não posso remover ${existingRail.name} em ${format(point)}`);
         await this.dig(existingRail);
       }
+      // A rampa anterior depende também da face do piso mais alto. Retire-a
+      // antes da troca para evitar sua destruição tardia pelo servidor.
+      if (restoreRamp) await this.dig(previousRail);
       await this.replace(support, supportItem, { preferredReference: previousSupport });
+      if (restoreRamp) {
+        this.log('repondo_rampa', { position: previousRail.position, item: previousRail.name, support });
+        await this.replace(previousRail.position, previousRail.name);
+      }
     }
 
     await this.replace(point, cell.powered ? 'powered_rail' : 'rail');

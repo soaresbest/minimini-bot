@@ -19,19 +19,20 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, liquid = 'wa
     .map((name, index) => ({ name, count: 64, type: index + 1 }));
   let heldItem = null;
 
-  function block(position, name) {
+  function block(position, name, shape = null) {
     return {
       name, position: position.clone(), type: LIQUIDS.has(name) ? 0 : 1,
       boundingBox: EMPTY.has(name) ? 'empty' : 'block',
       diggable: true,
+      getProperties: () => shape ? { shape } : {},
     };
   }
-  function put(position, name) { blocks.set(position.toString(), block(position, name)); }
+  function put(position, name, shape = null) { blocks.set(position.toString(), block(position, name, shape)); }
   function get(position) {
     assert.ok([position.x, position.y, position.z].every(Number.isInteger), 'consulta de bloco usa coordenadas inteiras');
     return blocks.get(position.toString()) ?? block(position, position.y <= waterY ? liquid : 'air');
   }
-  for (const [position, name] of initialBlocks) put(position, name);
+  for (const [position, name, shape] of initialBlocks) put(position, name, shape);
 
   function updatePhysics() {
     for (const current of [...blocks.values()].sort((a, b) => a.position.y - b.position.y)) {
@@ -69,6 +70,19 @@ function railwayWorld({ blocks: initialBlocks, botPosition, waterY, liquid = 'wa
         // O servidor já removeu o trilho sem apoio, mas o pacote ainda não
         // chegou: blockAt continua vendo o trilho até flushServerUpdates.
         delayedRailRemovals.push(above);
+      }
+      if (current.boundingBox === 'block') {
+        for (const [x, z, shape] of [
+          [-1, 0, 'ascending_east'], [1, 0, 'ascending_west'],
+          [0, -1, 'ascending_south'], [0, 1, 'ascending_north'],
+        ]) {
+          const neighbor = get(current.position.offset(x, 0, z));
+          if (['rail', 'powered_rail'].includes(neighbor.name) && neighbor.getProperties().shape === shape) {
+            // A rampa precisa também da face lateral no topo; removê-la
+            // destrói o trilho mesmo com seu piso inferior ainda sólido.
+            delayedRailRemovals.push(neighbor.position);
+          }
+        }
       }
       dug.push(current.position.clone());
       blocks.delete(current.position.toString());
@@ -376,3 +390,53 @@ test('retira e recoloca trilho existente ao estabilizar areia antes das atualiza
   assert.equal(world.get(previous.offset(0, -1, 0)).name, 'stone');
   assert.deepEqual(world.invalidPlacements, []);
 });
+
+for (const previousRail of ['rail', 'powered_rail']) {
+  const makeAscendingWorld = () => {
+    const previous = new Vec3(0, 64, 0);
+    const position = new Vec3(1, 65, 0);
+    const support = position.offset(0, -1, 0);
+    const previousFloor = previousRail === 'powered_rail' ? 'redstone_block' : 'stone';
+    const world = railwayWorld({
+      blocks: [[previous, previousRail, 'ascending_east'], [previous.offset(0, -1, 0), previousFloor],
+        [support, 'grass_block'], [support.offset(0, -1, 0), 'stone']],
+      botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
+    });
+    return { world, previous, position, support, previousFloor };
+  };
+
+  test(`preserva rampa anterior de ${previousRail} ao trocar seu apoio lateral alto por redstone`, async () => {
+    const { world, previous, position, support, previousFloor } = makeAscendingWorld();
+
+    await world.task.buildCell({ index: 1, position, previous, powered: true, slope: true });
+    world.flushServerUpdates();
+    world.updatePhysics();
+
+    assert.equal(world.get(previous).name, previousRail, 'a rampa resiste às atualizações tardias do servidor');
+    assert.equal(world.get(previous.offset(0, -1, 0)).name, previousFloor, 'preserva o piso inferior da rampa');
+    assert.equal(world.get(support).name, 'redstone_block');
+    assert.equal(world.get(position).name, 'powered_rail');
+    const railDig = world.dug.findIndex(point => point.equals(previous));
+    const supportDig = world.dug.findIndex(point => point.equals(support));
+    assert.ok(railDig >= 0 && supportDig > railDig, 'retira a rampa explicitamente antes de remover a face de apoio');
+    const supportPlaced = world.placed.findIndex(entry => entry.position.equals(support));
+    const railPlaced = world.placed.findIndex(entry => entry.position.equals(previous) && entry.name === previousRail);
+    assert.ok(supportPlaced >= 0 && railPlaced > supportPlaced, 'restaura o mesmo tipo de trilho após confirmar o apoio');
+    assert.ok(!world.dug.some(point => point.equals(previous.offset(0, -1, 0))));
+    assert.deepEqual(world.invalidPlacements, []);
+  });
+
+  test(`falta de ${previousRail} para restaurar a rampa preserva o piso alto e o trecho anterior`, async () => {
+    const { world, previous, position, support } = makeAscendingWorld();
+    world.items.find(item => item.name === previousRail).count = 0;
+
+    await assert.rejects(world.task.buildCell({ index: 1, position, previous, powered: true, slope: true }),
+      error => error.code === 'RAILWAY_MATERIALS' && error.message.includes(previousRail));
+    world.flushServerUpdates();
+
+    assert.equal(world.get(previous).name, previousRail);
+    assert.equal(world.get(support).name, 'grass_block');
+    assert.deepEqual(world.dug, []);
+    assert.deepEqual(world.placed, []);
+  });
+}
