@@ -139,8 +139,8 @@ function registrationStore(value) {
     const normalizedBots = {};
     for (const [name, password] of Object.entries(bots)) {
       const botName = minecraftName(name, 'Nome do bot registrado').toLowerCase();
-      if (typeof password !== 'string' || !/^\d{8}$/u.test(password)) {
-        throw new ConfigError('Senha de registro inválida; ela deve conter exatamente 8 dígitos.');
+      if (typeof password !== 'string' || !/^[^\s\u0000-\u001f\u007f]{1,64}$/u.test(password)) {
+        throw new ConfigError('Senha de registro inválida; use de 1 a 64 caracteres, sem espaços.');
       }
       define(normalizedBots, botName, password);
     }
