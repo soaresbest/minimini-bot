@@ -128,6 +128,21 @@ test('cliente Mineflayer real conecta offline e responde a menções pelo protoc
   offset = received.length;
   sendChat('Alice', '@Bot1 comando_desconhecido');
   await waitForReply(/Não entendi\. Use help\./, offset);
+  // Regressão: railclear deve compartilhar o limite com as mensagens normais.
+  record.controller.chat.intervalMs = 1100;
+  const commandTimes = [];
+  peer.on('chat', ({ message }) => {
+    if (message.startsWith('/execute')) commandTimes.push(Date.now());
+  });
+  sendChat('Alice', '@Bot1 railclear(Alice)');
+  await waitUntil(() => commandTimes.length >= 2, 'railclear deve enviar comandos espaçados.', t.signal);
+  assert.ok(commandTimes[1] - commandTimes[0] >= 1000, 'não pode enviar uma rajada de comandos');
+  sendChat('Alice', '@Bot1 stop');
+  await waitUntil(() => record.controller.abort === null, 'stop deve cancelar railclear.', t.signal);
+  const commandCount = commandTimes.length;
+  await delay(1200, undefined, { signal: t.signal });
+  assert.equal(commandTimes.length, commandCount, 'não envia comandos pendentes após stop');
+  assert.equal(record.controller.ready, true);
   assert.deepEqual(errors, []);
   const ended = once(record.bot, 'end', { signal: t.signal });
   manager.close();

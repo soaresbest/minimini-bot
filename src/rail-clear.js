@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import { PLAYER_NAME } from './commands.js';
 
 // Health é um campo NBT de entidades vivas. Armor stands também o possuem.
@@ -20,8 +19,10 @@ export async function clearRailway(controller, player, signal) {
     controller.ensurePlayer(player);
     for (const command of commands) {
       signal.throwIfAborted();
-      controller.bot.chat(command);
+      await controller.chat.command(command, {
+        signal,
+        beforeSend: () => controller.ensurePlayer(player),
+      });
     }
-    await delay(1000, undefined, { signal });
   }
 }

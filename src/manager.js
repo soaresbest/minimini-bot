@@ -65,7 +65,12 @@ export class BotManager {
       bot.once('login', () => { if (PLAYER_NAME.test(bot.username)) this.registerIdentity(bot.username); });
       bot.once('spawn', () => { clearTimeout(record.watchdog); record.attempts = 0; });
       bot.on('error', error => this.log(`[${spec.name}] falha de conexão (${safeErrorCode(error.code)}). Confira endereço, versão e autenticação.`));
-      bot.on('kicked', () => this.log(`[${spec.name}] desconectado pelo servidor. Confira whitelist, conta, versão e regras do servidor.`));
+      bot.on('kicked', reason => {
+        const spam = /disconnect\.spam|kicked\.spam|spam/i.test(typeof reason === 'string' ? reason : JSON.stringify(reason) ?? '');
+        this.log(spam
+          ? `[${spec.name}] desconectado pelo servidor por spam (excesso de mensagens ou comandos).`
+          : `[${spec.name}] desconectado pelo servidor. Confira whitelist, conta, versão e regras do servidor.`);
+      });
       bot.once('end', () => {
         clearTimeout(record.watchdog);
         controller.close();

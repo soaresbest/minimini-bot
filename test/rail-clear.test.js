@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { railClearCommands, clearRailway } from '../src/rail-clear.js';
+import { ChatQueue } from '../src/chat.js';
 import { parseCommand } from '../src/commands.js';
 import { validatePlan } from '../src/ai/planner.js';
 
@@ -24,19 +25,31 @@ test('comandos restringem remoção a seres vivos junto a trilhos na posição d
   assert.ok(commands.some(command => command.includes('~1 ~0 ~0')));
 });
 
-test('limpeza repete sem entidade local e cancelamento interrompe novos comandos', async () => {
+test('limpeza compartilha a fila do chat, repete e cancela sem comandos atrasados', async t => {
   const sent = [];
   const work = new AbortController();
-  const controller = { ensurePlayer: () => ({}), say: () => {}, bot: { chat: command => sent.push(command) } };
+  const chat = new ChatQueue({ chat: command => sent.push({ command, time: Date.now() }) }, { intervalMs: 20 });
+  t.after(() => { work.abort(); chat.close(); });
+  const controller = { ensurePlayer: () => ({}), say: message => chat.say(message), chat };
+  chat.say('Entendido. Vou executar.');
   const running = clearRailway(controller, 'Steve', work.signal);
   const rejected = assert.rejects(running, { name: 'AbortError' });
-  assert.equal(sent.length, 10);
-  await delay(1100);
-  assert.equal(sent.length, 20);
+  assert.equal(sent.length, 1, 'não envia rajada após a confirmação');
+  const deadline = Date.now() + 3000;
+  while (sent.filter(entry => entry.command.startsWith('/')).length < 11) {
+    assert.ok(Date.now() < deadline);
+    await delay(10);
+  }
+  const commands = sent.filter(entry => entry.command.startsWith('/')).map(entry => entry.command);
+  assert.deepEqual(commands.slice(0, 10), railClearCommands('Steve'));
+  assert.equal(commands[10], commands[0]);
+  for (let i = 1; i < sent.length; i++) assert.ok(sent[i].time - sent[i - 1].time >= 15);
   work.abort();
   await rejected;
-  await delay(50);
-  assert.equal(sent.length, 20);
+  const count = sent.length;
+  await delay(60);
+  assert.equal(sent.length, count);
+  assert.equal(chat.pendingCommand, null);
 });
 
 test('jogador desconectado impede comandos e sinal cancelado não envia nada', async () => {
@@ -45,4 +58,21 @@ test('jogador desconectado impede comandos e sinal cancelado não envia nada', a
   controller.ensurePlayer = () => ({});
   controller.say = () => {};
   await assert.rejects(clearRailway(controller, 'Steve', AbortSignal.abort()), { name: 'AbortError' });
+});
+
+test('fila revalida jogador antes do envio e rejeita pendência ao fechar', async t => {
+  const sent = [];
+  const chat = new ChatQueue({ chat: text => sent.push(text) }, { intervalMs: 20 });
+  t.after(() => chat.close());
+  chat.say('ocupando fila');
+  await assert.rejects(chat.command('/execute', {
+    signal: new AbortController().signal,
+    beforeSend: () => { throw new Error('jogador desconectou'); },
+  }), /desconectou/);
+  assert.equal(sent.length, 1);
+  const pending = chat.command('/execute', { signal: new AbortController().signal });
+  const rejected = assert.rejects(pending, /Conexão encerrada/);
+  chat.close();
+  await rejected;
+  assert.equal(sent.length, 1);
 });

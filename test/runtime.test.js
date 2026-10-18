@@ -516,7 +516,7 @@ test('falha ao salvar impede o envio da senha ao servidor', async () => {
 test('railclear permanece ativo, status preserva tarefa e stop encerra a limpeza', async t => {
   const h = harness(); t.after(h.close);
   await h.manager.handleChat(h.controller, 'Alice', '@Bot1 railclear(Alice)');
-  assert.equal(h.bot.sent.filter(message => message.startsWith('/execute')).length, 10);
+  assert.equal(h.bot.sent.filter(message => message.startsWith('/execute')).length, 1);
   assert.match(h.controller.task, /limpando trilhos/);
   await h.manager.handleChat(h.controller, 'Alice', '@Bot1 status');
   assert.match(h.controller.task, /limpando trilhos/);
