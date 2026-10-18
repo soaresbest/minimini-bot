@@ -2,6 +2,7 @@ export const PLAYER_NAME = /^[A-Za-z0-9_]{1,16}$/;
 
 export const HELP = [
   'goto(x,y,z), follow(player), guard(player), railway(x1,y1,z1,x2,y2,z2,true|false), stop, status, help, mode(ia|default)',
+  'railclear(player): remove mobs próximos dos trilhos continuamente; requer /execute e /kill. stop encerra.',
   'railway/trilhos: use ~ em qualquer coordenada; true permite /give e false usa só o inventário.',
   'bots, botadd(nome[,default|ia[,provedor]]), botremove(nome), botconfig(nome,mode|provider|model,valor)',
   'Exemplo: @bot1 goto(100,60,300). IA: @bot1 venha até mim. Provedores: openai, gemini, grok, claude.'
@@ -35,7 +36,7 @@ export function parseCommand(text) {
       if (horizontal && vertical) return { type: 'railway', startX, startY, startZ, endX, endY, endZ, allowCommands: permission === 'true' };
     }
   }
-  if (['follow', 'guard'].includes(type) && args.length === 1 && PLAYER_NAME.test(args[0])) return { type, player: args[0] };
+  if (['follow', 'guard', 'railclear'].includes(type) && args.length === 1 && PLAYER_NAME.test(args[0])) return { type, player: args[0] };
   if (type === 'mode' && args.length === 1 && ['ia', 'default'].includes(args[0].toLowerCase())) return { type, mode: args[0].toLowerCase() };
   if (type === 'botremove' && args.length === 1 && PLAYER_NAME.test(args[0])) return { type, name: args[0] };
   if (type === 'botadd' && args.length >= 1 && args.length <= 3 && PLAYER_NAME.test(args[0])) {

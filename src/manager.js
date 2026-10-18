@@ -123,6 +123,10 @@ export class BotManager {
       } catch (error) { this.respond(controller, username, text, error.message, true); }
       return;
     }
+    if (/^railclear\b/i.test(text)) {
+      this.respond(controller, username, text, 'Formato: railclear(player). Requer /execute e /kill; stop encerra.', true);
+      return;
+    }
     if (/^(railway|trilho|trilhos)\b/i.test(text)) {
       this.respond(controller, username, text, 'Formato: railway(x1,y1,z1,x2,y2,z2,true|false). Use ~ em qualquer coordenada.', true);
       return;

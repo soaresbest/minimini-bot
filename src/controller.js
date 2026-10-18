@@ -5,6 +5,7 @@ import { ChatQueue } from './chat.js';
 import { HELP } from './commands.js';
 import { CraftingTask } from './crafting.js';
 import { RailwayTask } from './railway.js';
+import { clearRailway } from './rail-clear.js';
 
 const { Movements, goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -187,6 +188,10 @@ export class BotController {
     signal.throwIfAborted();
     if (action.type === 'status') { this.say(this.status()); return; }
     if (action.type === 'help') { HELP.forEach(line => this.say(line)); return; }
+    if (action.type === 'railclear') {
+      await clearRailway(this, action.player, signal);
+      return;
+    }
     if (action.type === 'craft') {
       await new CraftingTask(this, signal).run(action.item, action.count);
       return;
