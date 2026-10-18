@@ -1,4 +1,5 @@
 import mineflayer from 'mineflayer';
+import { protocolCompatibility } from './protocol-compat.js';
 import pathfinderPackage from 'mineflayer-pathfinder';
 import path from 'node:path';
 import { randomInt } from 'node:crypto';
@@ -46,6 +47,7 @@ export class BotManager {
       const bot = this.createBot({
         host: this.config.server.host, port: this.config.server.port,
         version: this.config.server.version === 'auto' ? false : this.config.server.version,
+        customPackets: protocolCompatibility(this.config.server.version),
         username: spec.username, auth: spec.auth,
         profilesFolder: path.join(path.dirname(configPath()), 'sessions', spec.name),
         onMsaCode: data => this.log(`[${spec.name}] Login Microsoft: abra ${data.verification_uri} e informe o código ${data.user_code}.`)

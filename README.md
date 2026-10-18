@@ -114,6 +114,8 @@ Consulte [configuração detalhada](docs/configuration.md) e [integrações de I
 
 ## Sobrevivência e conexão
 
+No Minecraft vanilla 26.1–26.1.2, o programa aplica uma correção de protocolo para itens de colmeia com abelhas. Ela lê o identificador da entidade antes do NBT, evitando o erro `array size is abnormally large, not reading: 167832854` ao receber o item e ao reconectar. A correção preserva os dados dos itens e os limites de segurança do NBT; não altera protocolos anteriores nem arquivos de `node_modules`. Após atualizar, reinicie o bot. Não é necessário apagar o inventário ou o mundo. A correção está no código comum aos instaladores Windows, Linux e macOS, sem dependências adicionais.
+
 Todos os bots, em qualquer modo, comem automaticamente quando a fome chega ao limite configurado, se houver alimento seguro no inventário. A alimentação pausa o movimento e retoma a tarefa; se receber `stop` durante a refeição, permanece parado depois. Sem comida segura, o bot alerta somente quando a fome ou a vida chega a `8/20` ou menos, repetindo no máximo uma vez por minuto enquanto o risco continuar. Entregue alimentos e armas pelo inventário normal do Minecraft.
 
 O bot evita alimentos prejudiciais/teletransporte e caminhos que exigem alterar o terreno. Isso não garante sobrevivência a todos os perigos. A coleta de recursos ocorre somente para atender a um objetivo de fabricação solicitado, dentro dos limites descritos acima; o bot não explora novos chunks para buscar materiais. Ao morrer, cancela a tarefa e aguarda o respawn do servidor. Falhas de conexão iniciam novas tentativas com intervalo crescente; remover um bot ou encerrar o programa cancela essas tentativas.
