@@ -259,3 +259,11 @@ test('rejeita ferramenta Claude errada, recusas e bloqueios dos provedores', asy
     await assert.rejects(planActions({ ...argsFor(provider), fetchImpl: async () => Response.json(value) }), { code: 'AI_INVALID_PLAN' });
   }
 });
+
+test('railway com jogador passa pela lista permitida e valida permissão e nome', () => {
+  const action = { type: 'railway', player: 'Alex', allowCommands: false };
+  assert.deepEqual(validatePlan({ reply: 'Vou construir.', actions: [action] }).actions, [action]);
+  for (const invalid of [{ ...action, player: '/give' }, { ...action, allowCommands: 'true' }, { ...action, endX: 10 }]) {
+    assert.throws(() => validatePlan({ reply: 'Vou construir.', actions: [invalid] }), { code: 'AI_INVALID_PLAN' });
+  }
+});

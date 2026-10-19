@@ -3,7 +3,7 @@ export const PLAYER_NAME = /^[A-Za-z0-9_]{1,16}$/;
 export const HELP = [
   'goto(x,y,z), follow(player), guard(player), railway(x1,y1,z1,x2,y2,z2,true|false), stop, status, help, mode(ia|default)',
   'railclear(player): remove mobs próximos dos trilhos continuamente; requer /execute e /kill. stop encerra.',
-  'railway/trilhos: use ~ em qualquer coordenada; true permite /give e false usa só o inventário.',
+  'railway(player): constrói até o jogador usando o inventário. railway/trilhos: use ~ em qualquer coordenada; true permite /give e false usa só o inventário.',
   'bots, botadd(nome[,default|ia[,provedor]]), botremove(nome), botconfig(nome,mode|provider|model,valor)',
   'Exemplo: @bot1 goto(100,60,300). IA: @bot1 venha até mim. Provedores: openai, gemini, grok, claude.'
 ];
@@ -24,6 +24,9 @@ export function parseCommand(text) {
   if (type === 'goto' && args.length === 3 && args.every(x => /^-?\d+(?:\.\d+)?$/.test(x))) {
     const [x, y, z] = args.map(Number);
     if (Math.abs(x) <= 29999984 && Math.abs(z) <= 29999984 && y >= -64 && y <= 319) return { type, x, y, z };
+  }
+  if (['railway', 'trilho', 'trilhos'].includes(type) && args.length === 1 && PLAYER_NAME.test(args[0])) {
+    return { type: 'railway', player: args[0], allowCommands: false };
   }
   if (['railway', 'trilho', 'trilhos'].includes(type) && args.length === 7) {
     const coordinates = args.slice(0, 6);

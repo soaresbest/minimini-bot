@@ -135,7 +135,7 @@ export class BotManager {
       return;
     }
     if (/^(railway|trilho|trilhos)\b/i.test(text)) {
-      this.respond(controller, username, text, 'Formato: railway(x1,y1,z1,x2,y2,z2,true|false). Use ~ em qualquer coordenada.', true);
+      this.respond(controller, username, text, 'Formato: railway(player) ou railway(x1,y1,z1,x2,y2,z2,true|false). Use ~ em qualquer coordenada.', true);
       return;
     }
     if (controller.spec.mode === 'default' || !text || /^(mode|botadd|botremove|botconfig)\s*\(/i.test(text)) {

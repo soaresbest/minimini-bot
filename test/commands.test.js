@@ -43,3 +43,12 @@ test('chat limpa controles, limita pacotes e impede comandos slash', () => {
   chat.say('não enviar');
   assert.equal(chat.queue.length, 0);
 });
+
+test('railway aceita jogador e aliases sem autorizar comandos', () => {
+  for (const name of ['railway', 'trilho', 'trilhos']) {
+    assert.deepEqual(parseCommand(`${name}(Alex_123)`), { type: 'railway', player: 'Alex_123', allowCommands: false });
+  }
+  for (const command of ['railway()', 'railway(Alex,true)', 'railway(Alex Smith)', 'railway(abcdefghijklmnopq)', 'railway(/give)']) {
+    assert.equal(parseCommand(command), null);
+  }
+});

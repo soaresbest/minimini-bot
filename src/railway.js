@@ -114,6 +114,19 @@ export class RailwayTask {
   }
 
   async run(action) {
+    this.signal.throwIfAborted();
+    if (action.player !== undefined) {
+      const player = this.controller.ensurePlayer(action.player);
+      const position = player.entity?.position;
+      if (!position) throw new RailwayError(`O jogador ${action.player} está fora do alcance visível do bot`, 'RAILWAY_PLAYER_NOT_VISIBLE');
+      const end = integerPosition({ x: Math.floor(position.x), y: Math.floor(position.y), z: Math.floor(position.z) }, 'fim');
+      // Assim como no início, normalize o piso parcial sob os pés do jogador.
+      const feet = this.blockAt(vec(end));
+      if (this.isFloorCandidate(feet) && !this.isPassable(feet)
+        && this.isPassable(this.blockAt(vec(end).offset(0, 1, 0)))) end.y++;
+      action = { startX: null, startY: null, startZ: null,
+        endX: end.x, endY: end.y, endZ: end.z, allowCommands: action.allowCommands };
+    }
     this.allowCommands = action.allowCommands;
     const origin = {
       x: Math.floor(this.bot.entity.position.x),

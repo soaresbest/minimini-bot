@@ -76,6 +76,10 @@ test('comando de trilhos válido ou malformado nunca é enviado à IA', async t 
   assert.equal(actions[0].type, 'railway');
   assert.equal(actions[0].allowCommands, true);
 
+  await h.manager.handleChat(h.controller, 'Alice', '@Bot1 railway(Alice)');
+  assert.equal(plannerCalls, 0);
+  assert.deepEqual(actions, [{ type: 'railway', player: 'Alice', allowCommands: false }]);
+
   await h.manager.handleChat(h.controller, 'Alice', '@Bot1 trilhos(0,64,0,10,64,0,talvez)');
   assert.equal(plannerCalls, 0);
   assert.match(h.said.at(-1), /Formato: railway/u);
@@ -523,4 +527,12 @@ test('railclear permanece ativo, status preserva tarefa e stop encerra a limpeza
   await h.manager.handleChat(h.controller, 'Alice', '@Bot1 stop');
   assert.equal(h.controller.task, 'parado');
   assert.equal(h.controller.abort, null);
+});
+
+test('railway(player) rejeita offline, bots e jogadores fora do alcance', async t => {
+  const h = harness(); t.after(h.close);
+  h.bot.players.Bob = { username: 'Bob' };
+  for (const [player, error] of [['Nobody', /não está conectado/], ['Bot1', /não um bot/], ['Bob', /fora do alcance visível/]]) {
+    await assert.rejects(h.controller.execute({ type: 'railway', player, allowCommands: false }, new AbortController().signal), error);
+  }
 });

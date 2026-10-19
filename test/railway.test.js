@@ -643,3 +643,22 @@ test('colocação relê o mundo e repete uma recusa transitória do servidor', a
   assert.equal(attempts, 2);
   assert.equal(bot.blockAt(target).name, 'powered_rail');
 });
+
+test('railway(player) parte do bot e fixa o destino antes de o jogador se mover', async () => {
+  const { task, built } = terrainRun(({ y }) => y < 64 ? 'stone' : 'air', { x: -3, y: 64, z: 0 });
+  const player = { entity: { position: new Vec3(4.8, 64, -0.2) } };
+  task.controller.ensurePlayer = name => { assert.equal(name, 'Alex'); return player; };
+  const build = task.buildCell;
+  task.buildCell = async cell => { player.entity.position = new Vec3(50, 80, 50); return build(cell); };
+  await task.run({ player: 'Alex', allowCommands: false });
+  assert.deepEqual(built[0].position, { x: -3, y: 64, z: 0 });
+  assert.deepEqual(built.at(-1).position, { x: 4, y: 64, z: -1 });
+  assert.equal(task.allowCommands, false);
+});
+
+test('railway(player) rejeita jogador não visível antes de construir', async () => {
+  const { task, built } = terrainRun(() => 'air');
+  task.controller.ensurePlayer = () => ({});
+  await assert.rejects(task.run({ player: 'Alex', allowCommands: false }), { code: 'RAILWAY_PLAYER_NOT_VISIBLE' });
+  assert.equal(built.length, 0);
+});
