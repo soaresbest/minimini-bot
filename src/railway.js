@@ -172,7 +172,10 @@ export class RailwayTask {
             blocked: (x, z) => builtColumns.has(`${x},${z}`),
             goalDistance: remaining <= PLAN_HORIZON ? 0 : remaining - PLAN_HORIZON,
             heightsAt: (x, z, y, from) => this.terrainRailHeights(x, z, y, from),
-            costAt: (x, y, z) => LIQUID.has(this.blockAt(new Vec3(x, y - 1, z))?.name) ? 2 : 0,
+            costAt: (x, y, z) => {
+              const floor = this.blockAt(new Vec3(x, y - 1, z));
+              return AIR.has(floor?.name) ? 4 : LIQUID.has(floor?.name) ? 2 : 0;
+            },
           });
           this.log('plano', {
             from: current, to: plannedPath.at(-1), steps: plannedPath.length - 1, remaining,
@@ -374,11 +377,11 @@ export class RailwayTask {
 
   terrainRailHeights(x, z, currentY, previous = null) {
     const at = y => this.blockAt(new Vec3(x, y, z));
-    // Só existem rampas onde o próprio piso sobe/desce. Líquido serve como
-    // apoio substituível na superfície, nunca como espaço para o carrinho.
+    // Rampas acompanham o terreno; sobre ar, estenda o piso na altura atual.
+    // Líquido serve como apoio substituível, nunca como espaço para o carrinho.
     return [currentY - 1, currentY, currentY + 1].filter(y => {
       const floor = at(y - 1);
-      return this.isFloorCandidate(floor)
+      return (this.isFloorCandidate(floor) || (y === currentY && AIR.has(floor?.name)))
         && this.isPassable(at(y)) && this.hasClearance(x, z, y, previous);
     });
   }
@@ -426,7 +429,7 @@ export class RailwayTask {
     const supportItem = cell.powered ? 'redstone_block' : (usedStoneSupport ? 'stone' : null);
     if (supportItem && supportBlock?.name !== supportItem) {
       await this.prepareRailFloor(point, supportItem, cell.previous,
-        liquidSupport ? 'liquido' : unstableSupport ? 'gravidade' : !supportsRail(supportBlock) ? 'apoio_incompativel' : 'alimentacao');
+        AIR.has(supportBlock?.name) ? 'sem_apoio' : liquidSupport ? 'liquido' : unstableSupport ? 'gravidade' : !supportsRail(supportBlock) ? 'apoio_incompativel' : 'alimentacao');
     }
 
     const railItem = cell.powered ? 'powered_rail' : 'rail';
@@ -492,8 +495,8 @@ export class RailwayTask {
 
   validateFloor(point) {
     const support = this.blockAt(point.offset(0, -1, 0));
-    if (!this.isFloorCandidate(support)) {
-      throw new RailwayError(`o piso em ${format(point.offset(0, -1, 0))} não oferece apoio; é necessário procurar um desvio pelo terreno`, 'RAILWAY_TERRAIN_CHANGED');
+    if (!this.isFloorCandidate(support) && !AIR.has(support?.name)) {
+      throw new RailwayError(`o piso em ${format(point.offset(0, -1, 0))} não está carregado ou não pode receber apoio`, 'RAILWAY_TERRAIN_CHANGED');
     }
     if (!this.isPassable(this.blockAt(point)) || !this.hasClearance(point.x, point.z, point.y)) {
       throw new RailwayError(`o corredor em ${format(point)} está bloqueado ou contém líquido; o trilho precisa ficar acima da superfície`, 'RAILWAY_TERRAIN_CHANGED');

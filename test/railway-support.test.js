@@ -337,7 +337,7 @@ for (const liquid of LIQUIDS) {
   });
 }
 
-test('recusa piso vazio antes de construir uma ponte artificial', async () => {
+test('coloca piso de pedra no vazio antes do trilho', async () => {
   const previous = new Vec3(0, 64, 0);
   const position = new Vec3(1, 64, 0);
   const world = railwayWorld({
@@ -345,11 +345,13 @@ test('recusa piso vazio antes de construir uma ponte artificial', async () => {
     botPosition: previous.offset(0.5, 0, 0.5), waterY: -1,
   });
 
-  await assert.rejects(world.task.buildCell({ index: 1, position, previous, powered: false }),
-    error => error.code === 'RAILWAY_TERRAIN_CHANGED');
+  await world.task.buildCell({ index: 1, position, previous, powered: false });
 
   assert.deepEqual(world.dug, []);
-  assert.deepEqual(world.placed, []);
+  assert.deepEqual(world.placed.map(entry => entry.name), ['stone', 'rail']);
+  assert.equal(world.get(position.offset(0, -1, 0)).name, 'stone');
+  assert.equal(world.get(position).name, 'rail');
+  assert.deepEqual(world.invalidPlacements, []);
   assert.equal(world.get(previous).name, 'rail');
 });
 
@@ -517,4 +519,35 @@ test('repõe novamente a rampa quando uma atualização tardia a remove após a 
   } finally {
     clearTimeout(timer);
   }
+});
+
+test('estende piso sobre vários blocos vazios preservando alimentação', async () => {
+  const start = new Vec3(0, 64, 0);
+  const world = railwayWorld({ blocks: [[start.offset(0, -1, 0), 'stone']],
+    botPosition: start.offset(0.5, 0, 0.5), waterY: -1 });
+  await world.task.run({ startX: 0, startY: 64, startZ: 0, endX: 12, endY: 64, endZ: 0, allowCommands: false });
+  for (let x = 0; x <= 12; x++) {
+    const rail = world.get(new Vec3(x, 64, 0)).name;
+    assert.ok(['rail', 'powered_rail'].includes(rail));
+    assert.equal(world.get(new Vec3(x, 63, 0)).name, rail === 'powered_rail' ? 'redstone_block' : 'stone');
+  }
+  assert.deepEqual(world.invalidPlacements, []);
+});
+
+test('falta de pedra interrompe extensão sobre vazio sem colocar trilho sem apoio', async () => {
+  const previous = new Vec3(0, 64, 0);
+  const position = new Vec3(1, 64, 0);
+  const world = railwayWorld({ blocks: [[previous, 'rail'], [previous.offset(0, -1, 0), 'stone']],
+    botPosition: previous.offset(0.5, 0, 0.5), waterY: -1 });
+  world.items.find(item => item.name === 'stone').count = 0;
+  await assert.rejects(world.task.buildCell({ index: 1, position, previous, powered: false }), /stone/);
+  assert.deepEqual(world.placed, []);
+  assert.equal(world.get(previous).name, 'rail');
+});
+
+test('apoio descarregado não é tratado como ar', async () => {
+  const position = new Vec3(1, 64, 0);
+  const task = new RailwayTask({ bot: { blockAt: () => null } }, new AbortController().signal);
+  assert.deepEqual(task.terrainRailHeights(1, 0, 64), []);
+  await assert.rejects(task.buildCell({ index: 1, position, powered: false }), { code: 'RAILWAY_TERRAIN_CHANGED' });
 });

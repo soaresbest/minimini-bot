@@ -21,7 +21,7 @@ function terrainRun(blockNameAt, start = { x: 0, y: 64, z: 0 }, maximumBlocks = 
     const point = new Vec3(cell.position.x, cell.position.y, cell.position.z);
     assert.equal(bot.blockAt(point).name, 'air', 'o trilho fica acima do piso, fora de líquidos e paredes');
     const floor = bot.blockAt(point.offset(0, -1, 0));
-    assert.notEqual(floor.name, 'air', 'não cria ponte ou escada artificial sobre vazio');
+    if (floor.name === 'air') assert.equal(cell.position.y, cell.previous?.y, 'estende o piso sobre vazio sem criar rampas artificiais');
     built.push(cell);
     assert.ok(built.length < maximumBlocks, 'a rota não deve entrar em loop');
     bot.entity.position = point.offset(0.5, 0, 0.5);
@@ -242,12 +242,12 @@ test('obra contorna uma parede após a água sem antecipar escada acima do terre
     'não volta às colunas já construídas');
 });
 
-test('obra informa rota impossível em abismo sem construir passagem plana sobre o vazio', async () => {
+test('obra planeja passagem plana com piso artificial sobre abismo', async () => {
   const { task, built } = terrainRun(({ x, y }) => y <= (x === 1 ? 50 : 63) ? 'stone' : 'air');
 
-  await assert.rejects(runTo(task, { x: 2, z: 0 }), error => error.code === 'RAILWAY_NO_ROUTE');
+  await runTo(task, { x: 2, z: 0 });
 
-  assert.deepEqual(built.map(cell => cell.position), [{ x: 0, y: 64, z: 0 }]);
+  assert.deepEqual(built.map(cell => cell.position), [0, 1, 2].map(x => ({ x, y: 64, z: 0 })));
 });
 
 for (const liquid of FLUIDS) {
@@ -422,7 +422,9 @@ for (const { name, rail, previousY, allowed } of [
     const { task } = terrainRun(({ x, y, z }) => {
       if (x === 0 && y === 64 && z === 0) return rail;
       const floorY = x === 0 && z === 1 ? previousY - 1 : 63;
-      return columns.has(`${x},${z}`) && y <= floorY ? 'stone' : 'air';
+      // Paredes fecham o beco mesmo quando o bot pode construir piso no vazio.
+      if (!columns.has(`${x},${z}`)) return 'stone';
+      return y <= floorY ? 'stone' : 'air';
     });
     task.completedRailColumns.set('0,0', 64);
     const plan = () => task.planTerrainPath({
@@ -449,7 +451,7 @@ test('coordenadas automáticas usam a posição atual e aceitam qualquer Y no de
   assert.deepEqual(built, [{ index: 0, position: { x: 4, y: 71, z: 9 }, previous: null, powered: true }]);
 });
 
-test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () => {
+test('leitura do mundo acompanha rampas e permite piso plano sobre vazio', () => {
   const ground = new Map([[1, 64], [2, 62], [3, 65], [4, 61]]);
   const bot = {
     blockAt: ({ x, y, z }) => {
@@ -460,9 +462,9 @@ test('leitura do mundo sobe ou desce um bloco e recusa desníveis maiores', () =
   };
   const task = new RailwayTask({ bot }, new AbortController().signal);
   assert.deepEqual(task.terrainRailHeights(1, 0, 64), [65]);
-  assert.deepEqual(task.terrainRailHeights(2, 0, 64), [63]);
+  assert.deepEqual(task.terrainRailHeights(2, 0, 64), [63, 64]);
   assert.deepEqual(task.terrainRailHeights(3, 0, 64), []);
-  assert.deepEqual(task.terrainRailHeights(4, 0, 64), []);
+  assert.deepEqual(task.terrainRailHeights(4, 0, 64), [64]);
 });
 
 for (const liquid of ['water', 'lava']) {
