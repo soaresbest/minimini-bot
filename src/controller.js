@@ -54,10 +54,14 @@ export class BotController {
       if (!protectedEntity || entity?.id !== protectedEntity.id || !source?.position || source.id === protectedEntity.id || source.id === this.bot.entity.id || (source.username && this.manager.isBot(source.username))) return;
       this.following.aggressor = { id: source.id, expires: Date.now() + 10000 };
     });
-    this.listen('end', () => {
+    const suspendAndClose = () => {
       this.manager.suspendRailway?.(this);
       this.close();
-    });
+    };
+    // O kick precede end. Salve antes que uma operação pendente rejeite
+    // e executePlan descarte o progresso como se fosse falha da obra.
+    this.listen('kicked', suspendAndClose);
+    this.listen('end', suspendAndClose);
     this.tickTimer = setInterval(() => { void this.tick().catch(() => {}); }, 500);
     this.tickTimer.unref?.();
   }

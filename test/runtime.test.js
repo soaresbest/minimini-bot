@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { BotManager, generateRegistrationPassword } from '../src/manager.js';
 import { BotController, bestWeapon } from '../src/controller.js';
 import { validateConfig } from '../src/config.js';
+import { RailwayTask } from '../src/railway.js';
 
 class Point {
   constructor(x = 0, y = 64, z = 0) { Object.assign(this, { x, y, z }); }
@@ -647,4 +648,61 @@ test('movimento reinicia os 2s parado sem reiniciar o limite total de 10s', asyn
     assert.equal(reason, 'tempo_limite');
     assert.equal(index, steps.length);
   } });
+});
+
+
+test('kick preserva railway antes de operação pendente falhar e retoma após end', async t => {
+  const config = baseConfig({ server: { host: 'localhost', registration: false } });
+  const manager = new BotManager(config, { createBot: fakeBot, log: () => {} });
+  t.after(() => manager.close());
+  manager.start();
+  const record = manager.records.get('bot1');
+  const old = record.controller;
+  const oldBot = record.bot;
+  const checkpoint = { current: { x: 9, y: 64, z: 0 }, built: 9, allowCommands: false };
+  let rejectPlacement;
+  let resumed;
+  let runs = 0;
+  t.mock.method(RailwayTask.prototype, 'run', async function (_action, resume) {
+    runs++;
+    if (resume) { resumed = resume; return; }
+    this.checkpoint = checkpoint;
+    await new Promise((_resolve, reject) => { rejectPlacement = reject; });
+  });
+  const work = old.startWork('railway');
+  const execution = old.executePlan([{ type: 'railway', player: 'Alice' }, { type: 'status' }], work);
+  oldBot.emit('kicked', 'disconnect.spam');
+  assert.equal(old.closed, true);
+  assert.equal(work.signal.aborted, true);
+  assert.deepEqual(record.railwayResume.checkpoint, checkpoint);
+  rejectPlacement(new Error('conexão encerrada durante colocação'));
+  await execution;
+  assert.deepEqual(record.railwayResume.checkpoint, checkpoint);
+  assert.equal(record.reconnectTimer, null);
+
+  oldBot.emit('end');
+  assert.ok(record.reconnectTimer);
+  clearTimeout(record.reconnectTimer);
+  record.reconnectTimer = null;
+  manager.connect(record);
+  manager.resumeRailway(record.controller, Promise.resolve());
+  await delay(0);
+  assert.deepEqual(resumed, checkpoint);
+  assert.equal(runs, 2);
+  assert.equal(record.railwayResume, null);
+  assert.equal(record.controller.task, 'parado');
+});
+
+test('kick após stop não ressuscita uma obra cancelada', t => {
+  const h = harness();
+  t.after(h.close);
+  const record = { controller: h.controller };
+  h.manager.records.set('bot1', record);
+  h.controller.startWork('railway');
+  h.controller.activeRailway = { checkpoint: { built: 9 } };
+  h.controller.remainingActions = [{ type: 'railway' }];
+  h.controller.stop();
+  h.bot.emit('kicked', 'disconnect.spam');
+  assert.equal(record.railwayResume, null);
+  assert.equal(h.controller.closed, true);
 });
