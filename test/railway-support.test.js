@@ -375,7 +375,7 @@ for (const offset of [0, 1, 2]) {
   });
 }
 
-for (const material of FALLING) {
+for (const material of ['gravel', 'white_concrete_powder']) {
   test(`estabiliza ${material} suspenso antes do trilho comum para resistir às atualizações de gravidade`, async () => {
     const previous = new Vec3(0, 64, 0);
     const position = new Vec3(1, 64, 0);
@@ -404,14 +404,14 @@ for (const material of FALLING) {
   });
 }
 
-test('retira e recoloca trilho existente ao estabilizar areia antes das atualizações tardias do servidor', async () => {
+test('retira e recoloca trilho existente ao estabilizar cascalho antes das atualizações tardias do servidor', async () => {
   const previous = new Vec3(0, 64, 0);
   const position = new Vec3(1, 64, 0);
   const support = position.offset(0, -1, 0);
   const world = railwayWorld({
     blocks: [
       [previous, 'rail'], [previous.offset(0, -1, 0), 'stone'],
-      [position, 'rail'], [support, 'sand'], [support.offset(0, -3, 0), 'stone'],
+      [position, 'rail'], [support, 'gravel'], [support.offset(0, -3, 0), 'stone'],
     ],
     botPosition: previous.offset(0.5, 0, 0.5),
     waterY: -1,
@@ -551,3 +551,39 @@ test('apoio descarregado não é tratado como ar', async () => {
   assert.deepEqual(task.terrainRailHeights(1, 0, 64), []);
   await assert.rejects(task.buildCell({ index: 1, position, powered: false }), { code: 'RAILWAY_TERRAIN_CHANGED' });
 });
+
+for (const material of ['sand', 'red_sand']) {
+  for (const existingRail of [false, true]) {
+    test(`preserva ${material} ${existingRail ? 'com trilho existente' : 'ao colocar trilho comum'}`, async () => {
+      const position = new Vec3(1, 64, 0);
+      const support = position.offset(0, -1, 0);
+      const world = railwayWorld({
+        blocks: [[support, material], [support.offset(0, -1, 0), 'stone'],
+          ...(existingRail ? [[position, 'rail']] : [])],
+        botPosition: new Vec3(0.5, 64, 0.5), waterY: -1,
+      });
+      world.items.find(item => item.name === 'stone').count = 0;
+      await world.task.buildCell({ index: 1, position, previous: null, powered: false });
+      world.updatePhysics();
+      assert.equal(world.get(support).name, material);
+      assert.equal(world.get(position).name, 'rail');
+      assert.deepEqual(world.dug, []);
+      assert.ok(world.placed.every(entry => entry.name === 'rail'));
+    });
+  }
+  test(`recusa de trilho sobre ${material} não substitui areia por pedra`, async () => {
+    const position = new Vec3(1, 64, 0);
+    const support = position.offset(0, -1, 0);
+    const world = railwayWorld({
+      blocks: [[support, material], [support.offset(0, -1, 0), 'stone']],
+      botPosition: new Vec3(0.5, 64, 0.5), waterY: -1,
+      refusePlacement: (_point, item) => item === 'rail',
+    });
+    await assert.rejects(world.task.buildCell({ index: 1, position, previous: null, powered: false }),
+      { code: 'RAILWAY_PLACEMENT' });
+    assert.equal(world.get(support).name, material);
+    assert.deepEqual(world.dug, []);
+    assert.deepEqual(world.placed, []);
+    assert.equal(world.items.find(item => item.name === 'stone').count, 64);
+  });
+}

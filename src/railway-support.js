@@ -1,5 +1,5 @@
 const KNOWN_FULL_SUPPORTS = new Set([
-  'stone', 'cobblestone', 'dirt', 'grass_block', 'redstone_block', 'bedrock',
+  'stone', 'cobblestone', 'dirt', 'grass_block', 'redstone_block', 'bedrock', 'sand', 'red_sand',
 ]);
 
 /** Conservador: colisão parcial não significa uma face capaz de sustentar trilhos. */

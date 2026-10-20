@@ -19,7 +19,7 @@ const SUPPORT_MAX_BLOCKS = 3;
 const AIR = new Set(['air', 'cave_air', 'void_air']);
 const LIQUID = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
 const RAILS = new Set(['rail', 'powered_rail', 'detector_rail', 'activator_rail']);
-const FALLING_SUPPORTS = new Set(['sand', 'red_sand', 'gravel']);
+const SAND = new Set(['sand', 'red_sand']);
 const MATERIAL_BATCH = Object.freeze({ rail: 64, powered_rail: 32, redstone_block: 32, stone: 64 });
 const FACES = Object.freeze([
   new Vec3(0, 1, 0),
@@ -496,9 +496,10 @@ export class RailwayTask {
     const supportBlock = this.blockAt(support);
     this.validateFloor(point);
     const liquidSupport = LIQUID.has(supportBlock?.name);
-    const unstableSupport = FALLING_SUPPORTS.has(supportBlock?.name)
+    const unstableSupport = supportBlock?.name === 'gravel'
       || supportBlock?.name.endsWith('_concrete_powder');
-    let usedStoneSupport = liquidSupport || unstableSupport || !supportsRail(supportBlock);
+    let usedStoneSupport = !SAND.has(supportBlock?.name)
+      && (liquidSupport || unstableSupport || !supportsRail(supportBlock));
     const supportItem = cell.powered ? 'redstone_block' : (usedStoneSupport ? 'stone' : null);
     if (supportItem && supportBlock?.name !== supportItem) {
       await this.prepareRailFloor(point, supportItem, cell.previous,
@@ -512,6 +513,7 @@ export class RailwayTask {
       // Formas de colisão não representam todas as regras do servidor/mods.
       // Se o piso aparentemente válido ainda for recusado, normalize-o uma vez.
       if (error.code !== 'RAILWAY_PLACEMENT' || supportItem
+        || SAND.has(this.blockAt(support)?.name)
         || ['stone', 'redstone_block'].includes(this.blockAt(support)?.name)) throw error;
       await this.prepareRailFloor(point, 'stone', cell.previous, 'apoio_recusado');
       usedStoneSupport = true;

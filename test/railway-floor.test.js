@@ -18,7 +18,7 @@ function state(name, properties = {}) {
 for (const name of ['dirt_path', 'farmland', 'oak_fence', 'glass_pane', 'chest', 'white_carpet', 'oak_leaves', 'snow']) {
   test(`forma real de ${name} exige piso substituto`, () => assert.equal(supportsRail(state(name)), false));
 }
-for (const name of ['stone', 'grass_block', 'glass', 'hopper', 'soul_sand']) {
+for (const name of ['stone', 'grass_block', 'glass', 'hopper', 'soul_sand', 'sand', 'red_sand']) {
   test(`preserva apoio compatível de ${name}`, () => assert.equal(supportsRail(state(name)), true));
 }
 test('considera o estado da laje e da escada, não apenas o nome ou boundingBox', () => {
