@@ -211,8 +211,14 @@ export class BotController {
       }
     } catch (error) {
       if (!work.signal.aborted && this.abort === work) {
-        this.stop();
+        const railwayFailed = this.remainingActions?.[0]?.type === 'railway';
+        this.stop({ preserveResume: railwayFailed });
         this.say(`Não consegui concluir: ${error.name === 'TimeoutError' ? 'tempo limite atingido' : error.message}.`);
+        const record = this.manager.records?.get(this.spec.name.toLowerCase());
+        if (railwayFailed && record?.controller === this && record.railwayResume) {
+          this.task = 'railway interrompido; aguardando reconexão para retomar';
+          this.say('Progresso dos trilhos salvo para retomar ao reconectar. Use stop para cancelar.');
+        }
       }
     } finally {
       if (this.abort === work && !this.following) {
@@ -239,6 +245,12 @@ export class BotController {
       this.railwayResume = null;
       this.activeRailway = task;
       try { await task.run(action, resume); }
+      catch (error) {
+        // Uma operação pode falhar antes de kicked/end. Preserve a obra
+        // enquanto seu checkpoint ainda está disponível, antes do finally.
+        if (!signal.aborted && this.activeRailway === task) this.manager.suspendRailway?.(this);
+        throw error;
+      }
       finally { if (this.activeRailway === task) this.activeRailway = null; }
       return;
     }

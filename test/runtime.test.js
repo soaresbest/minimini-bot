@@ -706,3 +706,51 @@ test('kick após stop não ressuscita uma obra cancelada', t => {
   assert.equal(record.railwayResume, null);
   assert.equal(h.controller.closed, true);
 });
+
+
+for (const interruption of ['kicked', 'end', 'stop', 'novo pedido']) {
+  test(`falha de colocação antes de ${interruption} preserva apenas obras não canceladas`, async t => {
+    const config = baseConfig({ server: { host: 'localhost', registration: false } });
+    const manager = new BotManager(config, { createBot: fakeBot, log: () => {} });
+    t.after(() => manager.close());
+    manager.start();
+    const record = manager.records.get('bot1');
+    const old = record.controller;
+    const oldBot = record.bot;
+    const checkpoint = {
+      current: { x: -29981118, y: 63, z: -8 }, built: 5,
+      plannedPath: [{ x: -29981118, y: 63, z: -8 }, { x: -29981117, y: 64, z: -8 }],
+      allowCommands: false,
+    };
+    const actions = [{ type: 'railway', player: 'Alice' }, { type: 'status' }];
+    let runs = 0;
+    let resumed;
+    t.mock.method(RailwayTask.prototype, 'run', async function (_action, resume) {
+      runs++;
+      if (resume) { resumed = resume; return; }
+      this.checkpoint = checkpoint;
+      throw Object.assign(new Error('o servidor recusou colocar stone após 3 tentativas'), { code: 'RAILWAY_PLACEMENT' });
+    });
+    await old.executePlan(actions, old.startWork('railway'));
+    assert.equal(old.activeRailway, null);
+    assert.equal(old.abort, null);
+    assert.equal(old.closed, false);
+    assert.deepEqual(record.railwayResume, { checkpoint, actions });
+    assert.match(old.status(), /aguardando reconexão/);
+    await delay(0);
+    assert.equal(runs, 1, 'não repete a tarefa enquanto continua conectado');
+    if (interruption === 'stop') old.stop();
+    if (interruption === 'novo pedido') await old.executePlan([{ type: 'status' }], old.startWork('status'));
+    if (interruption !== 'end') oldBot.emit('kicked', 'desconectado pelo servidor');
+    oldBot.emit('end');
+    clearTimeout(record.reconnectTimer);
+    record.reconnectTimer = null;
+    manager.connect(record);
+    manager.resumeRailway(record.controller, Promise.resolve());
+    await delay(0);
+    const cancelled = ['stop', 'novo pedido'].includes(interruption);
+    assert.equal(runs, cancelled ? 1 : 2);
+    assert.deepEqual(resumed, cancelled ? undefined : checkpoint);
+    assert.equal(record.railwayResume, null);
+  });
+}
