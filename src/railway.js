@@ -1,6 +1,6 @@
 import pathfinderPackage from 'mineflayer-pathfinder';
 import vec3Package from 'vec3';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay, setImmediate as yieldToServer } from 'node:timers/promises';
 import { supportsRail } from './railway-support.js';
 
 const { goals } = pathfinderPackage;
@@ -42,7 +42,14 @@ const DIRECTIONS = Object.freeze([
 ]);
 
 /** Busca A* respeitando rampas de um bloco e a geometria plana das curvas. */
-export function findTerrainPath({ start, goal, heightsAt, previous = null, forcedFirst = null,
+export function findTerrainPath(options) {
+  const search = terrainPathSearch(options);
+  let step;
+  do { step = search.next(); } while (!step.done);
+  return step.value;
+}
+
+function* terrainPathSearch({ start, goal, heightsAt, previous = null, forcedFirst = null,
   blocked = () => false, costAt = () => 0, goalDistance = 0, radius = SEARCH_RADIUS, maxNodes = SEARCH_NODE_LIMIT }) {
   start = integerPosition(start, 'início do trecho');
   goal = { ...integerPosition({ ...goal, y: goal.y ?? start.y }, 'objetivo do trecho'), y: goal.y ?? null };
@@ -53,8 +60,14 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
   const best = new Map([[stateKey(initial), 0]]);
   open.push({ ...initial, f: heuristic(initial, goal, goalDistance) });
   let visited = 0;
+  let iterations = 0;
+  let sliceStarted = performance.now();
 
   while (open.size) {
+    if (++iterations % 64 === 0 && performance.now() - sliceStarted >= 10) {
+      yield;
+      sliceStarted = performance.now();
+    }
     const current = open.pop();
     if (current.g !== best.get(stateKey(current))) continue;
     const atGoal = reachedGoal(current, goal, goalDistance);
@@ -99,7 +112,10 @@ export function findTerrainPath({ start, goal, heightsAt, previous = null, force
     // exatamente num beco cuja única saída exigiria refazer os trilhos.
     if (atGoal && hasContinuation) return reconstruct(current);
   }
-  throw new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco', 'RAILWAY_NO_ROUTE');
+  const error = new RailwayError('não encontrei uma rota pelo terreno com rampas de no máximo um bloco', 'RAILWAY_NO_ROUTE');
+  error.searchReason = visited > maxNodes ? 'limite_de_busca' : 'rotas_esgotadas';
+  error.visited = visited;
+  throw error;
 }
 
 export class RailwayTask {
@@ -164,7 +180,7 @@ export class RailwayTask {
         const remaining = horizontalDistance(current, end);
         if (!plannedPath || plannedPath.length <= 2) {
           const planStarted = Date.now();
-          plannedPath = this.planTerrainPath({
+          plannedPath = await this.planTerrainPath({
             start: current,
             goal: end,
             previous,
@@ -244,10 +260,22 @@ export class RailwayTask {
     }));
   }
 
-  planTerrainPath(options) {
-    // A busca é síncrona: o mundo não muda até devolvermos o event loop.
-    // Reutilizar as leituras neste plano permite explorar desvios longos sem
-    // consultar os mesmos blocos centenas de vezes. Nunca reutilize entre lotes.
+  async searchTerrainPath(options) {
+    this.signal.throwIfAborted();
+    const search = terrainPathSearch(options);
+    while (true) {
+      this.signal.throwIfAborted();
+      const step = search.next();
+      if (step.done) return step.value;
+      // Permita keepalive, chunks e stop durante buscas extensas.
+      await yieldToServer(undefined, { signal: this.signal });
+      this.planningBlocks?.clear();
+    }
+  }
+
+  async planTerrainPath(options) {
+    // Cache apenas entre pausas: pacotes do servidor podem alterar o mundo.
+    this.signal.throwIfAborted();
     this.planningBlocks = new Map();
     try {
       if (this.contourDirection) {
@@ -260,7 +288,7 @@ export class RailwayTask {
         const goal = { ...options.start, y: null,
           [axis]: options.start[axis] + Math.sign(delta) * Math.min(48, Math.abs(delta)) };
         try {
-          const path = findTerrainPath({ ...options, goal, goalDistance: Math.abs(delta) >= 48 ? 16 : 0,
+          const path = await this.searchTerrainPath({ ...options, goal, goalDistance: Math.abs(delta) >= 48 ? 16 : 0,
             radius: SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
           if (path.length > 2) {
             this.contourDirection = null;
@@ -270,20 +298,21 @@ export class RailwayTask {
         } catch (error) {
           if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
         }
-        const path = this.planWideContour(options);
+        const path = await this.planWideContour(options);
         if (path) return path;
         throw new RailwayError('não encontrei continuação segura para contornar a montanha pelo piso carregado', 'RAILWAY_NO_ROUTE');
       }
       try {
-        const path = findTerrainPath(options);
+        const path = await this.searchTerrainPath(options);
         this.contourDirection = null;
         return path;
       } catch (error) {
         if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
         this.log('ampliando_busca', { from: options.start, radius: EXTENDED_SEARCH_RADIUS,
-          maxNodes: EXTENDED_SEARCH_NODE_LIMIT, forcedFirst: options.forcedFirst });
+          maxNodes: EXTENDED_SEARCH_NODE_LIMIT, forcedFirst: options.forcedFirst,
+          reason: error.searchReason, visited: error.visited });
         try {
-          const path = findTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
+          const path = await this.searchTerrainPath({ ...options, radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
           this.contourDirection = null;
           return path;
         } catch (extendedError) {
@@ -296,7 +325,7 @@ export class RailwayTask {
             this.log('ajustando_saida', { from: options.start, forcedFirst: options.forcedFirst,
               radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
             try {
-              const path = findTerrainPath({ ...options, forcedFirst: null,
+              const path = await this.searchTerrainPath({ ...options, forcedFirst: null,
                 radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
               this.contourDirection = null;
               return path;
@@ -304,28 +333,29 @@ export class RailwayTask {
               if (adjustedError?.code !== 'RAILWAY_NO_ROUTE') throw adjustedError;
             }
           }
-          // Reduza apenas quando a janela de chunks impede enxergar o horizonte
-          // normal. Em terreno carregado, mantenha a antecipação de becos longos.
+          // Uma busca esgotada não prova que o terreno é impossível. Tente
+          // um horizonte menor sem mudar a saída reservada.
           const dx = options.goal.x - options.start.x;
           const dz = options.goal.z - options.start.z;
           const axis = Math.abs(dx) >= Math.abs(dz) ? 'x' : 'z';
           const probe = { ...options.start,
             [axis]: options.start[axis] + Math.sign(options.goal[axis] - options.start[axis]) * PLAN_HORIZON };
           const remaining = horizontalDistance(options.start, options.goal);
-          if (remaining > 32 && !this.blockAt(vec(probe))) {
+          const searchLimited = extendedError.searchReason === 'limite_de_busca';
+          if (remaining > 32 && (searchLimited || !this.blockAt(vec(probe)))) {
             try {
-              const path = findTerrainPath({ ...options, goalDistance: remaining - 32,
+              const path = await this.searchTerrainPath({ ...options, goalDistance: remaining - 32,
                 radius: SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
-              this.log('horizonte_reduzido', { from: options.start, to: path.at(-1), reason: 'chunks_nao_carregados' });
+              this.log('horizonte_reduzido', { from: options.start, to: path.at(-1), reason: searchLimited ? 'limite_de_busca' : 'chunks_nao_carregados' });
               return path;
             } catch (error) {
               if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
             }
           }
-          const contour = this.planWideContour(options);
+          const contour = await this.planWideContour(options);
           if (contour) return contour;
-          this.log('sem_rota', { from: options.start, surroundings: this.describeTerrain(options.start) });
-          throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; rampas precisam variar no máximo um bloco por posição`, 'RAILWAY_NO_ROUTE');
+          this.log('sem_rota', { from: options.start, reason: extendedError.searchReason, visited: extendedError.visited, surroundings: this.describeTerrain(options.start) });
+          throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; a busca pode ter atingido seu limite ou não haver continuação segura no terreno carregado`, 'RAILWAY_NO_ROUTE');
         }
       }
     } finally {
@@ -333,7 +363,7 @@ export class RailwayTask {
     }
   }
 
-  planWideContour(options) {
+  async planWideContour(options) {
     // Não imponha progresso em direção ao destino em todos os trechos: uma
     // montanha pode exceder tanto o raio da busca quanto os chunks carregados.
     // Mantenha o lado escolhido até encontrar novamente uma rota de progresso.
@@ -362,7 +392,7 @@ export class RailwayTask {
       try {
         // A margem de 16 aceita uma saída lateral segura, sem exigir um ponto
         // exato. O A* exige continuação e mantém todas as regras de piso/rampa.
-        const path = findTerrainPath({ ...options, goal, goalDistance: 16,
+        const path = await this.searchTerrainPath({ ...options, goal, goalDistance: 16,
           radius: SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT });
         this.contourDirection = direction;
         this.log('contornando_montanha', { from: options.start, to: path.at(-1),

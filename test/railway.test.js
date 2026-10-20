@@ -58,18 +58,18 @@ for (const sign of [1, -1]) {
   });
 }
 
-test('contorno não inventa saída por blocos desconhecidos ou por um beco', () => {
+test('contorno não inventa saída por blocos desconhecidos ou por um beco', async () => {
   const { task } = terrainRun(() => 'air');
   task.contourDirection = { x: 0, z: 1 };
-  assert.equal(task.planWideContour({ start: { x: 0, y: 64, z: 0 },
+  assert.equal(await task.planWideContour({ start: { x: 0, y: 64, z: 0 },
     goal: { x: 40, y: null, z: 0 }, heightsAt: (x, z) => x === 0 && z > 0 && z <= 32 ? [64] : [] }), null);
 });
 
-test('cancelamento impede novo trecho lateral de contorno', () => {
+test('cancelamento impede novo trecho lateral de contorno', async () => {
   const { task } = terrainRun(() => 'air');
   task.contourDirection = { x: 0, z: 1 };
   task.signal = AbortSignal.abort();
-  assert.throws(() => task.planWideContour({ start: { x: 0, y: 64, z: 0 },
+  await assert.rejects(() => task.planWideContour({ start: { x: 0, y: 64, z: 0 },
     goal: { x: 40, y: null, z: 0 }, heightsAt: () => [64] }), { name: 'AbortError' });
 });
 
@@ -365,7 +365,7 @@ test('preserva um desvio longo que começa afastando-se do destino e reserva a p
   assert.equal(connection.powered, false, 'a conexão curva usa trilho comum');
 });
 
-test('cada planejamento consulta cada bloco uma vez e relê alterações do mundo no próximo plano', () => {
+test('cada planejamento consulta cada bloco uma vez e relê alterações do mundo no próximo plano', async () => {
   let wall = false;
   const { task } = terrainRun(({ x, y, z }) => {
     if (wall && x === 1 && z === 0 && y <= 66) return 'stone';
@@ -383,7 +383,7 @@ test('cada planejamento consulta cada bloco uma vez e relê alterações do mund
     heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
   };
 
-  const first = task.planTerrainPath(options);
+  const first = await task.planTerrainPath(options);
 
   assert.ok(first.some(({ x, z }) => x === 1 && z === 0));
   assert.ok(reads.size > 0);
@@ -392,7 +392,7 @@ test('cada planejamento consulta cada bloco uma vez e relê alterações do mund
   wall = true;
   assert.equal(task.blockAt(new Vec3(1, 64, 0)).name, 'stone', 'fora do planejamento a leitura já vê a parede nova');
   reads.clear();
-  const second = task.planTerrainPath(options);
+  const second = await task.planTerrainPath(options);
 
   assert.ok(!second.some(({ x, z }) => x === 1 && z === 0), 'o próximo plano não reutiliza o corredor antigo');
   assert.ok(second.some(({ z }) => z !== 0), 'encontra o desvio ao redor da parede nova');
@@ -400,9 +400,9 @@ test('cada planejamento consulta cada bloco uma vez e relê alterações do mund
   assert.ok([...reads.values()].every(count => count === 1));
 });
 
-test('amplia a busca quando o orçamento inicial não permite concluir o plano', () => {
+test('amplia a busca quando o orçamento inicial não permite concluir o plano', async () => {
   const { task } = terrainRun(({ y }) => y <= 63 ? 'stone' : 'air');
-  const path = task.planTerrainPath({
+  const path = await task.planTerrainPath({
     start: { x: 0, y: 64, z: 0 }, goal: { x: 4, y: 64, z: 0 }, maxNodes: 1,
     heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
   });
@@ -416,7 +416,7 @@ for (const { name, rail, previousY, allowed } of [
   { name: 'preserva a saída de trilho eletrificado mesmo quando há desvio lateral', rail: 'powered_rail', previousY: 64, allowed: false },
   { name: 'recusa redirecionar trilho comum na parte baixa de uma rampa descendente', rail: 'rail', previousY: 65, allowed: false },
 ]) {
-  test(name, () => {
+  test(name, async () => {
     const columns = new Set(['0,0', '0,-1', '0,1', '1,0', '2,0', '3,0']);
     const start = { x: 0, y: 64, z: 0 };
     const { task } = terrainRun(({ x, y, z }) => {
@@ -435,10 +435,10 @@ for (const { name, rail, previousY, allowed } of [
     });
 
     if (allowed) {
-      assert.deepEqual(plan(), Array.from({ length: 4 }, (_, x) => ({ x, y: 64, z: 0 })),
+      assert.deepEqual(await plan(), Array.from({ length: 4 }, (_, x) => ({ x, y: 64, z: 0 })),
         'após esgotar a saída norte, faz a curva plana para o leste sem reutilizar o trecho anterior');
     } else {
-      assert.throws(plan, error => error.code === 'RAILWAY_NO_ROUTE');
+      await assert.rejects(plan, error => error.code === 'RAILWAY_NO_ROUTE');
     }
   });
 }
@@ -663,4 +663,92 @@ test('railway(player) rejeita jogador não visível antes de construir', async (
   task.controller.ensurePlayer = () => ({});
   await assert.rejects(task.run({ player: 'Alex', allowCommands: false }), { code: 'RAILWAY_PLAYER_NOT_VISIBLE' });
   assert.equal(built.length, 0);
+});
+
+test('busca distingue limite de estados de rotas esgotadas', () => {
+  const options = { start: { x: 0, y: 64, z: 0 }, goal: { x: 8, y: 64, z: 0 } };
+  assert.throws(() => findTerrainPath({ ...options, maxNodes: 1, heightsAt: () => [64] }),
+    error => error.searchReason === 'limite_de_busca' && error.visited === 2);
+  assert.throws(() => findTerrainPath({ ...options, heightsAt: () => [] }),
+    error => error.searchReason === 'rotas_esgotadas');
+});
+
+test('busca extensa processa eventos, invalida cache e aceita stop durante o planejamento', async () => {
+  const { task } = terrainRun(({ y }) => y < 64 ? 'stone' : 'air');
+  const work = new AbortController();
+  task.signal = work.signal;
+  let events = 0;
+  let reads = 0;
+  const read = task.bot.blockAt;
+  task.bot.blockAt = point => { reads++; return read(point); };
+  const timer = setImmediate(() => { events++; work.abort(); });
+  try {
+    await assert.rejects(task.planTerrainPath({
+      start: { x: 0, y: 64, z: 0 }, goal: { x: 10000, y: 64, z: 0 },
+      maxNodes: 120000, heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
+    }), { name: 'AbortError' });
+    assert.equal(events, 1);
+    assert.ok(reads > 0, 'o cancelamento chega depois de a busca começar');
+    assert.equal(task.planningBlocks, null, 'o cache é liberado ao cancelar');
+  } finally { clearImmediate(timer); }
+});
+
+test('limite da busca ampliada tenta horizonte menor mesmo com chunks carregados', async () => {
+  const { task } = terrainRun(({ y }) => y < 64 ? 'stone' : 'air');
+  const options = { start: { x: 0, y: 64, z: 0 }, goal: { x: 100, y: null, z: 0 },
+    goalDistance: 36, forcedFirst: { x: 1, y: 64, z: 0 } };
+  const calls = [];
+  const expected = Array.from({ length: 33 }, (_, x) => ({ x, y: 64, z: 0 }));
+  task.searchTerrainPath = async value => {
+    calls.push(value);
+    if (value.goalDistance === 68) return expected;
+    const error = new RailwayError('limite', 'RAILWAY_NO_ROUTE');
+    error.searchReason = 'limite_de_busca';
+    throw error;
+  };
+  assert.deepEqual(await task.planTerrainPath(options), expected);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.at(-1).forcedFirst, options.forcedFirst);
+});
+
+test('terreno local do log permite seguir a oeste e depois subir sem reutilizar trilhos', async () => {
+  const start = { x: 16419, y: 114, z: -20000 };
+  const { task } = terrainRun(({ x, y, z }) => {
+    const top = x > start.x || z < start.z ? 114 : 113;
+    return y <= top ? 'grass_block' : 'air';
+  });
+  const path = await task.planTerrainPath({ start, previous: { ...start, z: start.z + 1 },
+    forcedFirst: { ...start, x: start.x - 1 }, goal: { x: start.x - 4, y: 115, z: start.z - 4 },
+    blocked: (x, z) => x === start.x && z >= start.z,
+    heightsAt: (x, z, y, from) => task.terrainRailHeights(x, z, y, from),
+  });
+  assert.deepEqual(path[1], { ...start, x: start.x - 1 });
+  assert.deepEqual(path.at(-1), { x: start.x - 4, y: 115, z: start.z - 4 });
+  assert.equal(new Set(path.map(column => `${column.x},${column.z}`)).size, path.length);
+});
+
+test('pausa da busca relê blocos alterados pelos pacotes do servidor', async () => {
+  const { task } = terrainRun(() => 'air');
+  const work = new AbortController();
+  task.signal = work.signal;
+  const marker = new Vec3(0, 63, 0);
+  let changed = false;
+  let observedChange = false;
+  task.bot.blockAt = point => ({ name: changed ? 'stone' : 'air', position: point });
+  let cancel;
+  const update = setImmediate(() => {
+    changed = true;
+    cancel = setImmediate(() => work.abort());
+  });
+  try {
+    await assert.rejects(task.planTerrainPath({
+      start: { x: 0, y: 64, z: 0 }, goal: { x: 10000, y: 64, z: 0 }, maxNodes: 120000,
+      heightsAt: () => {
+        if (changed && task.blockAt(marker).name === 'stone') observedChange = true;
+        else task.blockAt(marker);
+        return [64];
+      },
+    }), { name: 'AbortError' });
+    assert.ok(observedChange, 'descarta a leitura de ar feita antes da pausa');
+  } finally { clearImmediate(update); clearImmediate(cancel); }
 });
