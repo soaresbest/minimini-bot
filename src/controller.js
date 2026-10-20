@@ -141,14 +141,32 @@ export class BotController {
     this.pathFailure = false;
     if (!this.eating) this.bot.pathfinder.setGoal(goal, dynamic);
   }
-  async moveToGoal(goal, signal) {
+  async moveToGoal(goal, signal, { onStalled } = {}) {
     signal.throwIfAborted();
     this.setGoal(goal);
     const ownGoal = this.goal;
+    const started = performance.now();
+    let lastMoved = started;
+    let lastPosition = this.bot.entity.position.clone();
     try {
       while (!goal.isEnd(this.bot.entity.position.floored())) {
         signal.throwIfAborted();
-        if (this.pathFailure) throw new Error('não há caminho seguro até o destino');
+        if (onStalled) {
+          const now = performance.now();
+          // Ignore oscilações mínimas dos pacotes de posição.
+          if (this.bot.entity.position.distanceTo(lastPosition) >= 0.1) {
+            lastPosition = this.bot.entity.position.clone();
+            lastMoved = now;
+          }
+          if (now - lastMoved > 2000 || now - started > 10000) {
+            this.goal = null;
+            this.bot.pathfinder.setGoal(null);
+            this.bot.clearControlStates?.();
+            await onStalled(now - lastMoved > 2000 ? 'parado' : 'tempo_limite');
+            signal.throwIfAborted();
+            return;
+          }
+        } else if (this.pathFailure) throw new Error('não há caminho seguro até o destino');
         await delay(200, undefined, { signal });
       }
       signal.throwIfAborted();

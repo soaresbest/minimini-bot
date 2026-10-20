@@ -813,3 +813,40 @@ test('nova tentativa de terreno pode concluir normalmente', async t => {
   await Promise.resolve();
   assert.deepEqual(await result, { usedStoneSupport: true });
 });
+
+test('aproximação usa tp no destino mesmo sem autorização para give e confirma chegada', async () => {
+  const { task } = terrainRun(() => 'air');
+  const sent = [];
+  task.bot.username = 'Bot1';
+  task.bot.chat = command => {
+    sent.push(command);
+    task.bot.entity.position = new Vec3(20.5, 64, 0.5);
+  };
+  task.controller.moveToGoal = async (_goal, signal, { onStalled }) => {
+    assert.equal(signal, task.signal);
+    await onStalled('parado');
+  };
+  await task.moveNear(new Vec3(20, 64, 0));
+  assert.deepEqual(sent, ['/tp Bot1 20.5 64 0.5']);
+});
+
+test('teleporte não confirmado falha e não envia comandos repetidos', async t => {
+  const { task } = terrainRun(() => 'air');
+  let now = 0;
+  t.mock.method(performance, 'now', () => (now += 6000));
+  const sent = [];
+  task.bot.chat = command => sent.push(command);
+  await assert.rejects(task.teleportNear(new Vec3(20, 64, 0), 'tempo_limite'), { code: 'RAILWAY_TELEPORT_FAILED' });
+  assert.equal(sent.length, 1);
+});
+
+test('cancelamento impede tp e interrompe a espera de confirmação', async () => {
+  const { task } = terrainRun(() => 'air');
+  const abort = new AbortController();
+  task.signal = abort.signal;
+  let sent = 0;
+  task.bot.chat = () => { sent++; abort.abort(); };
+  await assert.rejects(task.teleportNear(new Vec3(20, 64, 0), 'parado'), { name: 'AbortError' });
+  await assert.rejects(task.teleportNear(new Vec3(20, 64, 0), 'parado'), { name: 'AbortError' });
+  assert.equal(sent, 1);
+});

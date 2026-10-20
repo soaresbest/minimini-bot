@@ -597,3 +597,54 @@ for (const disconnect of [false, true]) {
     assert.deepEqual(record.railwayResume, disconnect ? resume : null);
   });
 }
+
+for (const moving of [false, true]) {
+  test(`aproximação aciona recuperação por ${moving ? '10s em movimento' : '2s parado mesmo sem caminho'}`, async t => {
+    const h = harness();
+    t.after(h.close);
+    let now = 0;
+    t.mock.method(performance, 'now', () => now);
+    const work = h.controller.startWork('railway');
+    let calls = 0;
+    const goal = { isEnd: () => {
+      now = moving ? 10001 : 2001;
+      if (moving) h.bot.entity.position.x++;
+      h.controller.pathFailure = !moving;
+      return false;
+    } };
+    await h.controller.moveToGoal(goal, work.signal, { onStalled: async reason => {
+      calls++;
+      assert.equal(reason, moving ? 'tempo_limite' : 'parado');
+      assert.equal(h.bot.currentGoal, null);
+    } });
+    assert.equal(calls, 1);
+    assert.equal(h.controller.goal, null);
+  });
+}
+
+test('chegada normal e cancelamento não acionam recuperação de aproximação', async t => {
+  const h = harness();
+  t.after(h.close);
+  let calls = 0;
+  const options = { onStalled: async () => { calls++; } };
+  await h.controller.moveToGoal({ isEnd: () => true }, new AbortController().signal, options);
+  await assert.rejects(h.controller.moveToGoal({ isEnd: () => false }, AbortSignal.abort(), options), { name: 'AbortError' });
+  assert.equal(calls, 0);
+});
+
+test('movimento reinicia os 2s parado sem reiniciar o limite total de 10s', async t => {
+  const h = harness();
+  t.after(h.close);
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
+  const steps = [[2000, 0], [2001, 1], [4001, 1], [4002, 2], [10000, 3], [10001, 4]];
+  let index = 0;
+  const goal = { isEnd: () => {
+    [now, h.bot.entity.position.x] = steps[index++];
+    return false;
+  } };
+  await h.controller.moveToGoal(goal, new AbortController().signal, { onStalled: async reason => {
+    assert.equal(reason, 'tempo_limite');
+    assert.equal(index, steps.length);
+  } });
+});

@@ -579,7 +579,25 @@ export class RailwayTask {
   async moveNear(point) {
     if (this.bot.entity.position.distanceTo(point) <= 2.5) return;
     this.log('aproximando', { target: point, botPosition: this.bot.entity.position });
-    await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 2), this.signal);
+    await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 2), this.signal, {
+      onStalled: reason => this.teleportNear(point, reason),
+    });
+  }
+
+  async teleportNear(point, reason) {
+    this.signal.throwIfAborted();
+    const destination = vec(integerPosition(point, 'destino do teleporte')).offset(0.5, 0, 0.5);
+    this.log('teleportando', { target: destination, reason });
+    this.bot.chat(`/tp ${this.bot.username} ${destination.x} ${destination.y} ${destination.z}`);
+    const started = performance.now();
+    while (this.bot.entity.position.distanceTo(destination) > 1) {
+      this.signal.throwIfAborted();
+      if (performance.now() - started > 5000) {
+        throw new RailwayError('o servidor não confirmou o teleporte; confira a permissão para /tp', 'RAILWAY_TELEPORT_FAILED');
+      }
+      await delay(100, undefined, { signal: this.signal });
+    }
+    this.signal.throwIfAborted();
   }
 
   blockAt(point) {
