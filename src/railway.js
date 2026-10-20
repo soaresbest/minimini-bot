@@ -129,51 +129,68 @@ export class RailwayTask {
     this.pendingCell = null;
   }
 
-  async run(action) {
+  async run(action, resume = null) {
     this.signal.throwIfAborted();
-    if (action.player !== undefined) {
-      const player = this.controller.ensurePlayer(action.player);
-      const position = player.entity?.position;
-      if (!position) throw new RailwayError(`O jogador ${action.player} está fora do alcance visível do bot`, 'RAILWAY_PLAYER_NOT_VISIBLE');
-      const end = integerPosition({ x: Math.floor(position.x), y: Math.floor(position.y), z: Math.floor(position.z) }, 'fim');
-      // Assim como no início, normalize o piso parcial sob os pés do jogador.
-      const feet = this.blockAt(vec(end));
-      if (this.isFloorCandidate(feet) && !this.isPassable(feet)
-        && this.isPassable(this.blockAt(vec(end).offset(0, 1, 0)))) end.y++;
-      action = { startX: null, startY: null, startZ: null,
-        endX: end.x, endY: end.y, endZ: end.z, allowCommands: action.allowCommands };
+    let start, end;
+    if (resume) {
+      ({ start, end } = resume);
+      this.completedRailColumns = new Map(resume.completedRailColumns);
+      this.lastCompleted = resume.lastCompleted;
+      this.contourDirection = resume.contourDirection;
+      this.allowCommands = resume.allowCommands;
+    } else {
+      if (action.player !== undefined) {
+        const player = this.controller.ensurePlayer(action.player);
+        const position = player.entity?.position;
+        if (!position) throw new RailwayError(`O jogador ${action.player} está fora do alcance visível do bot`, 'RAILWAY_PLAYER_NOT_VISIBLE');
+        const end = integerPosition({ x: Math.floor(position.x), y: Math.floor(position.y), z: Math.floor(position.z) }, 'fim');
+        // Assim como no início, normalize o piso parcial sob os pés do jogador.
+        const feet = this.blockAt(vec(end));
+        if (this.isFloorCandidate(feet) && !this.isPassable(feet)
+          && this.isPassable(this.blockAt(vec(end).offset(0, 1, 0)))) end.y++;
+        action = { startX: null, startY: null, startZ: null,
+          endX: end.x, endY: end.y, endZ: end.z, allowCommands: action.allowCommands };
+      }
+      this.allowCommands = action.allowCommands;
+      const origin = {
+        x: Math.floor(this.bot.entity.position.x),
+        y: Math.floor(this.bot.entity.position.y),
+        z: Math.floor(this.bot.entity.position.z),
+      };
+      start = integerPosition({
+        x: action.startX ?? origin.x, y: action.startY ?? origin.y, z: action.startZ ?? origin.z,
+      }, 'início');
+      // Em paths/lajes o pé está dentro do bloco parcial. O trilho deve ficar
+      // acima do piso normalizado, não tentar ocupar o próprio piso.
+      if (action.startY == null && this.bot.blockAt) {
+        const feet = this.blockAt(vec(start));
+        if (this.isFloorCandidate(feet) && !this.isPassable(feet)
+          && this.isPassable(this.blockAt(vec(start).offset(0, 1, 0)))) start.y++;
+      }
+      const validatedEnd = integerPosition({
+        x: action.endX ?? origin.x, y: action.endY ?? origin.y, z: action.endZ ?? origin.z,
+      }, 'fim');
+      end = { ...validatedEnd, y: action.endY === null ? null : validatedEnd.y };
     }
-    this.allowCommands = action.allowCommands;
-    const origin = {
-      x: Math.floor(this.bot.entity.position.x),
-      y: Math.floor(this.bot.entity.position.y),
-      z: Math.floor(this.bot.entity.position.z),
+    let current = resume?.current ?? start;
+    let previous = resume?.previous ?? null;
+    let forcedFirst = resume?.forcedFirst ?? null;
+    let plannedPath = resume?.plannedPath ?? null;
+    let built = resume?.built ?? 0;
+    let lastPowered = resume?.lastPowered ?? 0;
+    const builtColumns = new Set(resume?.builtColumns ?? [columnKey(start)]);
+    const checkpoint = (initialBuilt, path = plannedPath) => {
+      this.checkpoint = structuredClone({ start, end, current, previous, forcedFirst: path?.[1] ?? forcedFirst,
+        plannedPath: path, built, lastPowered, builtColumns: [...builtColumns], initialBuilt,
+        completedRailColumns: [...this.completedRailColumns], lastCompleted: this.lastCompleted,
+        contourDirection: this.contourDirection, allowCommands: this.allowCommands });
     };
-    const start = integerPosition({
-      x: action.startX ?? origin.x, y: action.startY ?? origin.y, z: action.startZ ?? origin.z,
-    }, 'início');
-    // Em paths/lajes o pé está dentro do bloco parcial. O trilho deve ficar
-    // acima do piso normalizado, não tentar ocupar o próprio piso.
-    if (action.startY == null && this.bot.blockAt) {
-      const feet = this.blockAt(vec(start));
-      if (this.isFloorCandidate(feet) && !this.isPassable(feet)
-        && this.isPassable(this.blockAt(vec(start).offset(0, 1, 0)))) start.y++;
-    }
-    const validatedEnd = integerPosition({
-      x: action.endX ?? origin.x, y: action.endY ?? origin.y, z: action.endZ ?? origin.z,
-    }, 'fim');
-    const end = { ...validatedEnd, y: action.endY === null ? null : validatedEnd.y };
-    let current = start;
-    let previous = null;
-    let forcedFirst = null;
-    let plannedPath = null;
-    let built = 0;
-    let lastPowered = 0;
-    const builtColumns = new Set([columnKey(start)]);
     this.log('inicio', { start, end, allowCommands: this.allowCommands });
     const startedAt = Date.now();
     try {
-      await this.buildCell({ index: 0, position: start, previous: null, powered: true });
+      checkpoint(resume?.initialBuilt ?? false);
+      if (!resume?.initialBuilt) await this.buildCellWithRetry({ index: 0, position: start, previous: null, powered: true });
+      checkpoint(true);
 
       while (!samePosition(current, end)) {
         this.signal.throwIfAborted();
@@ -214,20 +231,24 @@ export class RailwayTask {
           this.signal.throwIfAborted();
           const position = path[offset];
           const next = path[offset + 1] ?? null;
-          const index = ++built;
+          checkpoint(true, path.slice(offset - 1));
+          const index = built + 1;
           const slope = current.y !== position.y || next?.y !== position.y;
           const corner = isCorner(current, position, next);
           const endpoint = samePosition(position, end);
           const maximumGap = slope ? 3 : 8;
           const powered = !corner && (endpoint || index - lastPowered >= maximumGap);
-          if (powered) lastPowered = index;
+
           const cell = { index, position, previous: current, powered, slope, corner };
           this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
-          await this.buildCell(cell);
+          await this.buildCellWithRetry(cell);
+          built = index;
+          if (powered) lastPowered = index;
           builtColumns.add(columnKey(position));
           previous = current;
           current = position;
           builtOffset = offset;
+          checkpoint(true, path.slice(offset));
         }
         forcedFirst = path[builtOffset + 1] ?? null;
         plannedPath = path.slice(builtOffset);
@@ -437,6 +458,28 @@ export class RailwayTask {
       // excluir blocos realmente inquebráveis, pois o bot se aproximará depois.
       return this.isPassable(block) || Boolean(block && !LIQUID.has(block.name) && block.diggable !== false);
     });
+  }
+
+  async buildCellWithRetry(cell) {
+    try {
+      return await this.buildCell(cell);
+    } catch (error) {
+      this.signal.throwIfAborted();
+      if (error.code !== 'RAILWAY_TERRAIN_CHANGED') throw error;
+      this.log('aguardando_terreno', { position: cell.position, waitMs: 10000 });
+      await delay(10000, undefined, { signal: this.signal });
+      try {
+        return await this.buildCell(cell);
+      } catch (retryError) {
+        this.signal.throwIfAborted();
+        if (retryError.code !== 'RAILWAY_TERRAIN_CHANGED'
+          || !RAILS.has(this.blockAt(vec(cell.position))?.name)) throw retryError;
+        this.completedRailColumns.set(columnKey(cell.position), cell.position.y);
+        this.lastCompleted = { index: cell.index, position: cell.position };
+        this.pendingCell = null;
+        this.log('trilho_preservado', this.lastCompleted);
+      }
+    }
   }
 
   async buildCell(cell) {

@@ -54,7 +54,10 @@ export class BotController {
       if (!protectedEntity || entity?.id !== protectedEntity.id || !source?.position || source.id === protectedEntity.id || source.id === this.bot.entity.id || (source.username && this.manager.isBot(source.username))) return;
       this.following.aggressor = { id: source.id, expires: Date.now() + 10000 };
     });
-    this.listen('end', () => this.close());
+    this.listen('end', () => {
+      this.manager.suspendRailway?.(this);
+      this.close();
+    });
     this.tickTimer = setInterval(() => { void this.tick().catch(() => {}); }, 500);
     this.tickTimer.unref?.();
   }
@@ -64,7 +67,7 @@ export class BotController {
   onSpawn() {
     if (this.closed) return;
     this.life++;
-    this.stop();
+    this.stop({ preserveResume: true });
     this.ready = true;
     const movements = new Movements(this.bot);
     movements.canDig = false;
@@ -75,9 +78,10 @@ export class BotController {
     this.bot.pathfinder.setMovements(movements);
     this.manager.registerIdentity(this.bot.username);
     const life = this.life;
-    void this.manager.authenticateServer(this, life).catch(() => {
+    const authentication = this.manager.authenticateServer(this, life).catch(() => {
       if (!this.closed && this.life === life) this.manager.log(`[${this.spec.name}] não foi possível preparar o registro automático; nenhuma senha foi enviada.`);
     });
+    this.manager.resumeRailway?.(this, authentication);
     this.say(`Pronto! Modo ${this.spec.mode}. Use @${this.spec.name} help.`);
     this.manager.log(`[${this.spec.name}] conectado como ${this.bot.username}.`);
   }
@@ -107,7 +111,14 @@ export class BotController {
     if (!player) throw new Error(`O jogador ${name} não está conectado.`);
     return player;
   }
-  stop() {
+  stop({ preserveResume = false } = {}) {
+    if (!preserveResume && !this.closed) {
+      const record = this.manager.records?.get(this.spec.name.toLowerCase());
+      if (record?.controller === this) record.railwayResume = null;
+    }
+    this.activeRailway = null;
+    this.remainingActions = null;
+    this.railwayResume = null;
     this.abort?.abort();
     this.abort = null;
     this.following = null;
@@ -165,8 +176,9 @@ export class BotController {
   }
   async executePlan(actions, work) {
     try {
-      for (const action of actions) {
+      for (const [index, action] of actions.entries()) {
         work.signal.throwIfAborted();
+        this.remainingActions = actions.slice(index);
         await this.execute(action, work.signal);
       }
       if (!work.signal.aborted && this.abort === work && !this.following) {
@@ -181,7 +193,10 @@ export class BotController {
         this.say(`Não consegui concluir: ${error.name === 'TimeoutError' ? 'tempo limite atingido' : error.message}.`);
       }
     } finally {
-      if (this.abort === work && !this.following) this.abort = null;
+      if (this.abort === work && !this.following) {
+        this.abort = null;
+        this.remainingActions = null;
+      }
     }
   }
   async execute(action, signal) {
@@ -197,7 +212,12 @@ export class BotController {
       return;
     }
     if (action.type === 'railway') {
-      await new RailwayTask(this, signal).run(action);
+      const task = new RailwayTask(this, signal);
+      const resume = this.railwayResume;
+      this.railwayResume = null;
+      this.activeRailway = task;
+      try { await task.run(action, resume); }
+      finally { if (this.activeRailway === task) this.activeRailway = null; }
       return;
     }
     if (action.type === 'stop') {

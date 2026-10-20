@@ -3,6 +3,7 @@ import { protocolCompatibility } from './protocol-compat.js';
 import pathfinderPackage from 'mineflayer-pathfinder';
 import path from 'node:path';
 import { randomInt } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { BotController } from './controller.js';
 import { extractMention, parseCommand, HELP, PLAYER_NAME } from './commands.js';
 import { saveConfig, validateConfig, configPath, serverKey } from './config.js';
@@ -87,6 +88,36 @@ export class BotManager {
       this.log(`[${spec.name}] não foi possível iniciar a conexão. Confira a configuração.`);
       this.scheduleReconnect(record);
     }
+  }
+  suspendRailway(controller) {
+    const record = this.records.get(key(controller.spec.name));
+    if (this.closing || record?.removed || record?.controller !== controller) return;
+    const checkpoint = controller.activeRailway?.checkpoint;
+    if (checkpoint && controller.remainingActions && !controller.abort?.signal.aborted) {
+      record.railwayResume = structuredClone({ checkpoint, actions: controller.remainingActions });
+    }
+  }
+  resumeRailway(controller, authentication) {
+    const record = this.records.get(key(controller.spec.name));
+    const resume = record?.railwayResume;
+    if (!resume || record.controller !== controller || this.closing || record.removed) return;
+    const work = controller.startWork('retomando construção de trilhos');
+    record.railwayResume = resume;
+    // Mantenha o checkpoint no registro até começar: outra queda durante
+    // autenticação não pode apagar a obra pendente.
+    void (async () => {
+      try {
+        await authentication;
+        if (this.config.server.registration) await delay(1000, undefined, { signal: work.signal });
+        work.signal.throwIfAborted();
+        record.railwayResume = null;
+        controller.railwayResume = resume.checkpoint;
+        controller.say('Reconectado. Vou continuar a construção de trilhos de onde parei.');
+        await controller.executePlan(resume.actions, work);
+      } catch {
+        if (!controller.closed) record.railwayResume = null;
+      }
+    })();
   }
   scheduleReconnect(record) {
     if (this.closing || record.removed || record.reconnectTimer) return;

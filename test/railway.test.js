@@ -752,3 +752,64 @@ test('pausa da busca relê blocos alterados pelos pacotes do servidor', async ()
     assert.ok(observedChange, 'descarta a leitura de ar feita antes da pausa');
   } finally { clearImmediate(update); clearImmediate(cancel); }
 });
+
+for (const name of ['rail', 'powered_rail', 'detector_rail', 'activator_rail', 'air']) {
+  test(`terreno alterado espera 10s e preserva somente trilhos: ${name}`, async t => {
+    const { task } = terrainRun(() => name);
+    let attempts = 0;
+    task.buildCell = async () => { attempts++; throw new RailwayError('mudou', 'RAILWAY_TERRAIN_CHANGED'); };
+    const cell = { index: 2, position: { x: 2, y: 64, z: 0 } };
+    const started = performance.now();
+    const result = task.buildCellWithRetry(cell);
+    const checked = name === 'air' ? assert.rejects(result, { code: 'RAILWAY_TERRAIN_CHANGED' }) : result;
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(attempts, 1);
+    await checked;
+    assert.ok(performance.now() - started >= 9900);
+    assert.equal(attempts, 2);
+    assert.equal(task.lastCompleted?.index, name === 'air' ? undefined : 2);
+  });
+}
+
+test('stop cancela a espera por terreno alterado sem repetir a construção', async t => {
+  const { task } = terrainRun(() => 'rail');
+  const abort = new AbortController();
+  task.signal = abort.signal;
+  let attempts = 0;
+  task.buildCell = async () => { attempts++; throw new RailwayError('mudou', 'RAILWAY_TERRAIN_CHANGED'); };
+  const result = task.buildCellWithRetry({ position: { x: 0, y: 64, z: 0 } });
+  await Promise.resolve();
+  abort.abort();
+  await assert.rejects(result, { name: 'AbortError' });
+  assert.equal(attempts, 1);
+});
+
+test('checkpoint retoma o bloco interrompido sem repetir os concluídos', async () => {
+  const terrain = ({ y }) => y < 64 ? 'stone' : 'air';
+  const first = terrainRun(terrain);
+  const build = first.task.buildCell;
+  first.task.buildCell = async cell => {
+    if (cell.index === 4) throw new Error('conexão encerrada');
+    return build(cell);
+  };
+  await assert.rejects(runTo(first.task, { x: 20, y: 64, z: 0 }), /conexão encerrada/);
+  const second = terrainRun(terrain, { x: 3, y: 64, z: 0 });
+  await second.task.run({}, structuredClone(first.task.checkpoint));
+  assert.equal(second.built[0].index, 4);
+  assert.equal(second.built.at(-1).position.x, 20);
+  assert.deepEqual([...first.built, ...second.built].map(cell => cell.index), Array.from({ length: 21 }, (_, i) => i));
+  assert.deepEqual(second.built.filter(cell => cell.powered).map(cell => cell.index), [8, 16, 20]);
+});
+
+test('nova tentativa de terreno pode concluir normalmente', async t => {
+  const { task } = terrainRun(() => 'air');
+  let attempts = 0;
+  task.buildCell = async () => {
+    if (++attempts === 1) throw new RailwayError('mudou', 'RAILWAY_TERRAIN_CHANGED');
+    return { usedStoneSupport: true };
+  };
+  const result = task.buildCellWithRetry({ position: { x: 0, y: 64, z: 0 } });
+  await Promise.resolve();
+  assert.deepEqual(await result, { usedStoneSupport: true });
+});

@@ -536,3 +536,64 @@ test('railway(player) rejeita offline, bots e jogadores fora do alcance', async 
     await assert.rejects(h.controller.execute({ type: 'railway', player, allowCommands: false }, new AbortController().signal), error);
   }
 });
+
+test('desconexão salva railway antes de fechar e reconexão retoma o plano', async t => {
+  const config = baseConfig({ server: { host: 'localhost', registration: false } });
+  const manager = new BotManager(config, { createBot: fakeBot, log: () => {} });
+  t.after(() => manager.close());
+  manager.start();
+  const record = manager.records.get('bot1');
+  const old = record.controller;
+  old.startWork('railway');
+  const checkpoint = { current: { x: 4, y: 64, z: 0 }, allowCommands: false };
+  old.activeRailway = { checkpoint };
+  old.remainingActions = [{ type: 'railway', player: 'Alice' }, { type: 'status' }];
+  record.bot.emit('end');
+  assert.equal(old.closed, true);
+  assert.deepEqual(record.railwayResume.checkpoint, checkpoint);
+  clearTimeout(record.reconnectTimer);
+  record.reconnectTimer = null;
+  manager.connect(record);
+  const fresh = record.controller;
+  let received;
+  fresh.executePlan = async actions => { received = { actions, checkpoint: fresh.railwayResume }; };
+  manager.resumeRailway(fresh, Promise.resolve());
+  await Promise.resolve();
+  assert.deepEqual(received, { actions: [{ type: 'railway', player: 'Alice' }, { type: 'status' }], checkpoint });
+  assert.equal(record.railwayResume, null);
+});
+
+test('stop antes da desconexão não deixa railway para retomar', t => {
+  const h = harness();
+  t.after(h.close);
+  const record = { controller: h.controller };
+  h.manager.records.set('bot1', record);
+  h.controller.startWork('railway');
+  h.controller.activeRailway = { checkpoint: { built: 3 } };
+  h.controller.remainingActions = [{ type: 'railway' }];
+  h.controller.stop();
+  h.bot.emit('end');
+  assert.equal(record.railwayResume, null);
+});
+
+for (const disconnect of [false, true]) {
+  test(`retomada aguardando autenticação: ${disconnect ? 'nova queda mantém progresso' : 'stop descarta progresso'}`, async t => {
+    const h = harness();
+    t.after(h.close);
+    const resume = { checkpoint: { built: 3 }, actions: [{ type: 'railway' }] };
+    const record = { controller: h.controller, railwayResume: resume };
+    h.manager.records.set('bot1', record);
+    let finishAuth;
+    const authentication = new Promise(resolve => { finishAuth = resolve; });
+    let executions = 0;
+    h.controller.executePlan = async () => { executions++; };
+    h.manager.resumeRailway(h.controller, authentication);
+    if (disconnect) h.bot.emit('end');
+    else h.controller.stop();
+    finishAuth();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(executions, 0);
+    assert.deepEqual(record.railwayResume, disconnect ? resume : null);
+  });
+}
