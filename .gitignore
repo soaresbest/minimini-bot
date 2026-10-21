@@ -9,3 +9,5 @@ coverage/
 .minimini-bot/
 config.json
 !.example-config.json
+
+logs/railway/

@@ -35,7 +35,7 @@ function fakeBot({ username = 'Bot1' } = {}) {
 function harness(extra = {}, options = {}) {
   const config = baseConfig(extra);
   const saved = [];
-  const manager = new BotManager(config, { log: () => {}, save: async c => saved.push(c), createBot: fakeBot, ...options });
+  const manager = new BotManager(config, { railwayLogger: async () => null, log: () => {}, save: async c => saved.push(c), createBot: fakeBot, ...options });
   const bot = fakeBot();
   const controller = new BotController(bot, config.bots[0], manager);
   controller.ready = true;
@@ -464,7 +464,7 @@ test('registro é salvo por servidor e bot antes de agendar os comandos', async 
   const scheduled = [];
   const events = [];
   const passwords = ['00123456', '87654321'];
-  const manager = new BotManager(config, {
+  const manager = new BotManager(config, { railwayLogger: async () => null,
     log: () => {}, save: async value => { events.push('save'); saved.push(structuredClone(value)); },
     registrationPassword: () => passwords.shift()
   });
@@ -496,7 +496,7 @@ test('registro desativado não gera nem envia senha', async () => {
   const config = validateConfig({ server: { host: 'localhost', registration: false }, bots: [{ name: 'Bot1' }] });
   let generated = false;
   let scheduled = false;
-  const manager = new BotManager(config, {
+  const manager = new BotManager(config, { railwayLogger: async () => null,
     save: async () => assert.fail('não deve salvar'), log: () => {},
     registrationPassword: () => { generated = true; return '12345678'; }
   });
@@ -508,7 +508,7 @@ test('registro desativado não gera nem envia senha', async () => {
 test('falha ao salvar impede o envio da senha ao servidor', async () => {
   const config = baseConfig();
   let scheduled = false;
-  const manager = new BotManager(config, {
+  const manager = new BotManager(config, { railwayLogger: async () => null,
     log: () => {}, registrationPassword: () => '12345678',
     save: async () => { throw new Error('disco indisponível'); }
   });
@@ -540,7 +540,7 @@ test('railway(player) rejeita offline, bots e jogadores fora do alcance', async 
 
 test('desconexão salva railway antes de fechar e reconexão retoma o plano', async t => {
   const config = baseConfig({ server: { host: 'localhost', registration: false } });
-  const manager = new BotManager(config, { createBot: fakeBot, log: () => {} });
+  const manager = new BotManager(config, { railwayLogger: async () => null, createBot: fakeBot, log: () => {} });
   t.after(() => manager.close());
   manager.start();
   const record = manager.records.get('bot1');
@@ -653,7 +653,7 @@ test('movimento reinicia os 2s parado sem reiniciar o limite total de 10s', asyn
 
 test('kick preserva railway antes de operação pendente falhar e retoma após end', async t => {
   const config = baseConfig({ server: { host: 'localhost', registration: false } });
-  const manager = new BotManager(config, { createBot: fakeBot, log: () => {} });
+  const manager = new BotManager(config, { railwayLogger: async () => null, createBot: fakeBot, log: () => {} });
   t.after(() => manager.close());
   manager.start();
   const record = manager.records.get('bot1');
@@ -711,7 +711,7 @@ test('kick após stop não ressuscita uma obra cancelada', t => {
 for (const interruption of ['kicked', 'end', 'stop', 'novo pedido']) {
   test(`falha de colocação antes de ${interruption} preserva apenas obras não canceladas`, async t => {
     const config = baseConfig({ server: { host: 'localhost', registration: false } });
-    const manager = new BotManager(config, { createBot: fakeBot, log: () => {} });
+    const manager = new BotManager(config, { railwayLogger: async () => null, createBot: fakeBot, log: () => {} });
     t.after(() => manager.close());
     manager.start();
     const record = manager.records.get('bot1');
@@ -754,3 +754,61 @@ for (const interruption of ['kicked', 'end', 'stop', 'novo pedido']) {
     assert.equal(record.railwayResume, null);
   });
 }
+
+test('erro e kick persistem detalhes e plano antes da limpeza sem log duplicado no end', async t => {
+  const saved = [];
+  const h = harness({}, { railwayLogger: async ({ details }) => { saved.push(details); return '/tmp/diagnostico.json'; } });
+  t.after(h.close);
+  h.manager.records.set('bot1', { controller: h.controller });
+  const checkpoint = { current: { x: 4, y: 64, z: 0 }, planningHistory: [{ path: [{ x: 5, y: 64, z: 0 }] }] };
+  t.mock.method(RailwayTask.prototype, 'run', async function () {
+    this.checkpoint = checkpoint;
+    this.planningHistory = checkpoint.planningHistory;
+    this.pendingCell = { index: 5, position: { x: 5, y: 64, z: 0 } };
+    throw Object.assign(new Error('recusou stone'), { code: 'RAILWAY_PLACEMENT' });
+  });
+  await h.controller.executePlan([{ type: 'railway' }], h.controller.startWork('railway'));
+  h.bot.emit('kicked', { text: 'timeout' });
+  h.bot.emit('end', 'socketClosed');
+  await h.manager.flushRailwayLogs();
+  assert.equal(saved.length, 2);
+  assert.equal(saved[0].error.code, 'RAILWAY_PLACEMENT');
+  assert.equal(saved[0].pending.index, 5);
+  assert.deepEqual(saved[0].planning, checkpoint.planningHistory);
+  assert.equal(saved[1].event, 'desconectado_pelo_servidor');
+  assert.deepEqual(saved[1].error.reason, { text: 'timeout' });
+  assert.deepEqual(saved[1].planning, checkpoint.planningHistory);
+});
+
+test('falha ao salvar diagnóstico não impede suspender railway', async t => {
+  const messages = [];
+  const h = harness({}, { railwayLogger: async () => { throw new Error('disco cheio'); }, log: line => messages.push(line) });
+  t.after(h.close);
+  const record = { controller: h.controller };
+  h.manager.records.set('bot1', record);
+  h.controller.startWork('railway');
+  h.controller.activeRailway = { checkpoint: { current: { x: 1, y: 64, z: 0 } } };
+  h.controller.remainingActions = [{ type: 'railway' }];
+  h.bot.emit('end', 'socketClosed');
+  await h.manager.flushRailwayLogs();
+  assert.ok(record.railwayResume);
+  assert.equal(h.controller.closed, true);
+  assert.ok(messages.some(line => line.includes('disco cheio')));
+});
+
+test('erro de conexão durante railway registra código e checkpoint', async t => {
+  const saved = [];
+  const manager = new BotManager(baseConfig(), { createBot: fakeBot, log: () => {},
+    railwayLogger: async ({ details }) => { saved.push(details); } });
+  t.after(() => manager.close());
+  manager.start();
+  const record = manager.records.get('bot1');
+  record.controller.startWork('railway');
+  record.controller.activeRailway = { checkpoint: { current: { x: 3, y: 64, z: 0 } } };
+  record.bot.emit('error', Object.assign(new Error('conexão perdida'), { code: 'ECONNRESET' }));
+  await manager.flushRailwayLogs();
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].event, 'erro_conexao');
+  assert.equal(saved[0].error.code, 'ECONNRESET');
+  assert.equal(saved[0].checkpoint.current.x, 3);
+});

@@ -57,7 +57,7 @@ test('cliente Mineflayer real conecta offline e responde a menções pelo protoc
     bots: [{ name: 'Bot1', auth: 'offline', mode: 'default' }],
     access: { ignoredPlayers: ['OtherBot'] }, settings: { commandCooldownMs: 0 },
   });
-  manager = new BotManager(config, {
+  manager = new BotManager(config, { railwayLogger: async () => null,
     log: () => {}, registrationPassword: () => '00123456',
     save: async value => { savedConfig = structuredClone(value); }
   });

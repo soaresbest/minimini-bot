@@ -54,14 +54,15 @@ export class BotController {
       if (!protectedEntity || entity?.id !== protectedEntity.id || !source?.position || source.id === protectedEntity.id || source.id === this.bot.entity.id || (source.username && this.manager.isBot(source.username))) return;
       this.following.aggressor = { id: source.id, expires: Date.now() + 10000 };
     });
-    const suspendAndClose = () => {
+    const suspendAndClose = (event, reason) => {
+      this.manager.recordRailwayIncident?.(this, event, reason);
       this.manager.suspendRailway?.(this);
       this.close();
     };
     // O kick precede end. Salve antes que uma operação pendente rejeite
     // e executePlan descarte o progresso como se fosse falha da obra.
-    this.listen('kicked', suspendAndClose);
-    this.listen('end', suspendAndClose);
+    this.listen('kicked', reason => suspendAndClose('desconectado_pelo_servidor', reason));
+    this.listen('end', reason => suspendAndClose('conexao_encerrada', reason));
     this.tickTimer = setInterval(() => { void this.tick().catch(() => {}); }, 500);
     this.tickTimer.unref?.();
   }
@@ -248,7 +249,10 @@ export class BotController {
       catch (error) {
         // Uma operação pode falhar antes de kicked/end. Preserve a obra
         // enquanto seu checkpoint ainda está disponível, antes do finally.
-        if (!signal.aborted && this.activeRailway === task) this.manager.suspendRailway?.(this);
+        if (!signal.aborted && this.activeRailway === task) {
+          this.manager.recordRailwayIncident?.(this, 'erro', error, task);
+          this.manager.suspendRailway?.(this);
+        }
         throw error;
       }
       finally { if (this.activeRailway === task) this.activeRailway = null; }

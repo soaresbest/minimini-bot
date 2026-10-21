@@ -4,6 +4,7 @@ import pathfinderPackage from 'mineflayer-pathfinder';
 import path from 'node:path';
 import { randomInt } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { writeRailwayIncident } from './railway-log.js';
 import { BotController } from './controller.js';
 import { extractMention, parseCommand, HELP, PLAYER_NAME } from './commands.js';
 import { saveConfig, validateConfig, configPath, serverKey } from './config.js';
@@ -13,7 +14,7 @@ const MANAGEMENT = new Set(['mode', 'bots', 'botadd', 'botremove', 'botconfig'])
 const key = name => name.toLowerCase();
 
 export class BotManager {
-  constructor(config, { save = saveConfig, createBot = mineflayer.createBot, planner = planActions, Controller = BotController, log = console.log, registrationPassword = generateRegistrationPassword } = {}) {
+  constructor(config, { save = saveConfig, createBot = mineflayer.createBot, planner = planActions, Controller = BotController, log = console.log, registrationPassword = generateRegistrationPassword, railwayLogger = writeRailwayIncident } = {}) {
     this.config = config;
     this.save = save;
     this.createBot = createBot;
@@ -21,6 +22,8 @@ export class BotManager {
     this.Controller = Controller;
     this.log = log;
     this.registrationPassword = registrationPassword;
+    this.railwayLogger = railwayLogger;
+    this.pendingRailwayLogs = new Set();
     this.records = new Map();
     this.identities = new Set();
     this.closing = false;
@@ -67,7 +70,10 @@ export class BotManager {
       record.watchdog.unref?.();
       bot.once('login', () => { if (PLAYER_NAME.test(bot.username)) this.registerIdentity(bot.username); });
       bot.once('spawn', () => { clearTimeout(record.watchdog); record.attempts = 0; });
-      bot.on('error', error => this.log(`[${spec.name}] falha de conexão (${safeErrorCode(error.code)}). Confira endereço, versão e autenticação.`));
+      bot.on('error', error => {
+        this.recordRailwayIncident(controller, 'erro_conexao', error);
+        this.log(`[${spec.name}] falha de conexão (${safeErrorCode(error.code)}). Confira endereço, versão e autenticação.`);
+      });
       bot.on('kicked', reason => {
         const spam = /disconnect\.spam|kicked\.spam|spam/i.test(typeof reason === 'string' ? reason : JSON.stringify(reason) ?? '');
         this.log(spam
@@ -88,6 +94,35 @@ export class BotManager {
       this.log(`[${spec.name}] não foi possível iniciar a conexão. Confira a configuração.`);
       this.scheduleReconnect(record);
     }
+  }
+  recordRailwayIncident(controller, event, error, task = controller.activeRailway) {
+    const record = this.records.get(key(controller.spec.name));
+    if (this.closing || record?.removed) return;
+    const checkpoint = task?.checkpoint ?? record?.railwayResume?.checkpoint;
+    if (!task && !checkpoint) return;
+    const details = {
+      time: new Date().toISOString(), bot: controller.bot.username, event,
+      error: error instanceof Error
+        ? { name: error.name, code: error.code ?? null, message: error.message, stack: error.stack }
+        : { reason: error ?? null },
+      dimension: controller.bot.game?.dimension,
+      botPosition: controller.bot.entity?.position,
+      pending: task?.pendingCell ?? null,
+      lastCompleted: task?.lastCompleted ?? checkpoint?.lastCompleted ?? null,
+      checkpoint: checkpoint ?? null,
+      planning: task?.planningHistory ?? checkpoint?.planningHistory ?? [],
+    };
+    // Copie antes de fechar o controlador ou de avançar a tarefa.
+    const frozen = structuredClone(details);
+    const operation = Promise.resolve().then(() => this.railwayLogger({ bot: controller.bot, details: frozen }))
+      .then(file => { if (file) this.log(`[${controller.spec.name}] diagnóstico railway salvo em ${file}`); })
+      .catch(error => this.log(`[${controller.spec.name}] não foi possível salvar o diagnóstico railway: ${error.message}`))
+      .finally(() => this.pendingRailwayLogs.delete(operation));
+    this.pendingRailwayLogs.add(operation);
+    return operation;
+  }
+  async flushRailwayLogs() {
+    await Promise.all([...this.pendingRailwayLogs]);
   }
   suspendRailway(controller) {
     const record = this.records.get(key(controller.spec.name));

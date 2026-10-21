@@ -127,6 +127,7 @@ export class RailwayTask {
     this.completedRailColumns = new Map();
     this.lastCompleted = null;
     this.pendingCell = null;
+    this.planningHistory = [];
   }
 
   async run(action, resume = null) {
@@ -137,6 +138,7 @@ export class RailwayTask {
       this.completedRailColumns = new Map(resume.completedRailColumns);
       this.lastCompleted = resume.lastCompleted;
       this.contourDirection = resume.contourDirection;
+      this.planningHistory = resume.planningHistory ?? [];
       this.allowCommands = resume.allowCommands;
     } else {
       if (action.player !== undefined) {
@@ -183,7 +185,7 @@ export class RailwayTask {
       this.checkpoint = structuredClone({ start, end, current, previous, forcedFirst: path?.[1] ?? forcedFirst,
         plannedPath: path, built, lastPowered, builtColumns: [...builtColumns], initialBuilt,
         completedRailColumns: [...this.completedRailColumns], lastCompleted: this.lastCompleted,
-        contourDirection: this.contourDirection, allowCommands: this.allowCommands });
+        contourDirection: this.contourDirection, allowCommands: this.allowCommands, planningHistory: this.planningHistory });
     };
     this.log('inicio', { start, end, allowCommands: this.allowCommands });
     const startedAt = Date.now();
@@ -265,6 +267,7 @@ export class RailwayTask {
   }
 
   log(event, details = {}) {
+    if (event === 'plano') this.planningHistory.push(structuredClone({ time: new Date().toISOString(), ...details }));
     this.controller.manager?.log?.(`[railway] ${JSON.stringify({
       time: new Date().toISOString(), bot: this.bot.username, event, ...details,
     })}`);

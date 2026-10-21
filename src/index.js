@@ -17,11 +17,12 @@ async function main() {
   console.log('Use Ctrl+C para encerrar. Comandos no Minecraft: @nomeDoBot help');
   const manager = new BotManager(config);
   let closing = false;
-  const shutdown = () => {
+  const shutdown = async () => {
     if (closing) return;
     closing = true;
     console.log('\nEncerrando bots...');
     manager.close();
+    await manager.flushRailwayLogs();
     const timer = setTimeout(() => process.exit(0), 1500);
     timer.unref();
   };
