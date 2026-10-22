@@ -3,6 +3,7 @@ import vec3Package from 'vec3';
 import { setTimeout as delay, setImmediate as yieldToServer } from 'node:timers/promises';
 import { supportsRail } from './railway-support.js';
 import { navigationWaypoints } from './navigation.js';
+import { planDescentCorridor } from './descent-plan.js';
 
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -333,6 +334,14 @@ export class RailwayTask {
     this.signal.throwIfAborted();
     this.planningBlocks = new Map();
     try {
+      if (!this.contourDirection) {
+        const descent = await planDescentCorridor({ ...options,
+          onYield: () => this.planningBlocks?.clear() }, this.signal);
+        if (descent) {
+          this.log('corredor_descida', { from: options.start, to: options.goal, path: descent });
+          return descent;
+        }
+      }
       if (this.contourDirection) {
         // Durante o contorno, reduzir a distância Manhattan voltando pela
         // lateral da mesma parede não significa ter vencido o obstáculo.
@@ -529,7 +538,7 @@ export class RailwayTask {
 
   async prepareDescentSupport(cell, lowerCell) {
     const point = vec(cell.position);
-    await this.moveNear(point);
+    await this.positionForDescent(point, lowerCell?.position);
     this.validateFloor(point);
     for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
     const support = point.offset(0, -1, 0);
@@ -552,6 +561,23 @@ export class RailwayTask {
       await this.prepareRailFloor(point, item, lowerCell?.position ?? null, 'descida');
     }
     this.log('apoio_descida_concluido', { index: cell.index, position: support, item: this.blockAt(support)?.name });
+  }
+
+  async positionForDescent(point, preferred = null) {
+    const candidates = [
+      ...(preferred ? [vec(preferred)] : []),
+      ...DIRECTIONS.map(({ x, z }) => point.offset(x, 0, z)),
+    ];
+    for (const standing of candidates) {
+      if (!supportsRail(this.blockAt(standing.offset(0, -1, 0)))
+        || !this.isPassable(this.blockAt(standing)) || !this.isPassable(this.blockAt(standing.offset(0, 1, 0)))) continue;
+      if (this.bot.entity.position.distanceTo(standing.offset(0.5, 0, 0.5)) > 0.5) {
+        await this.teleportNear(standing, 'construcao_descida');
+      }
+      return;
+    }
+    // Não teleporte para dentro de blocos, líquidos ou sobre um vão sem piso.
+    await this.moveNear(point);
   }
 
   async moveOffDescentBlock(target, standing) {

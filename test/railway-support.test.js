@@ -596,7 +596,15 @@ function descendingWorld(length = 14) {
       [end.offset(0, -1, 0), 'stone']],
     botPosition: start.offset(0.5, 0, 0.5), waterY: -65,
   });
-  return { ...world, start, end, action: { startX: start.x, startY: start.y, startZ: start.z,
+  const teleports = [];
+  world.task.bot.username = 'testbot';
+  world.task.bot.chat = command => {
+    assert.match(command, /^\/tp testbot /, 'somente teleporte autorizado; materiais vêm do inventário');
+    const position = new Vec3(...command.split(' ').slice(2).map(Number));
+    teleports.push(position);
+    world.task.bot.entity.position = position;
+  };
+  return { ...world, teleports, start, end, action: { startX: start.x, startY: start.y, startZ: start.z,
     endX: end.x, endY: end.y, endZ: end.z, allowCommands: false } };
 }
 
@@ -618,6 +626,7 @@ test('calcula descida sobre vazio e constrói apoios e trilhos de baixo para cim
     assert.equal(world.get(point.offset(-1, 0, 0)).boundingBox, 'block', 'face alta sustenta o trilho inclinado');
   }
   assert.equal(world.get(world.start).name, 'powered_rail');
+  assert.ok(world.teleports.length > 0, 'usa tp para acompanhar a construção dos apoios');
   assert.deepEqual(world.invalidPlacements, []);
 });
 
@@ -684,4 +693,44 @@ test('sem pedra a descida interrompe os apoios e não coloca os trilhos', async 
   world.items.find(item => item.name === 'stone').count = 0;
   await assert.rejects(world.task.run(world.action), /stone/);
   assert.ok(world.placed.every(entry => !['rail', 'powered_rail'].includes(entry.name)));
+});
+
+test('constrói descida de 52 blocos com trilhos existentes na saída e usa tp nos apoios', async () => {
+  const start = new Vec3(-29825631, 116, -26);
+  const end = new Vec3(-29825681, 64, -22);
+  const world = railwayWorld({ blocks: [
+    [start, 'powered_rail'], [start.offset(0, -1, 0), 'redstone_block'],
+    [start.offset(-1, 0, 0), 'rail'], [start.offset(-1, -1, 0), 'stone'],
+    [start.offset(-2, 0, 0), 'powered_rail'], [start.offset(-2, -1, 0), 'redstone_block'],
+    // Base sintética carregada para testar construção; o log não contém esta altura.
+    ...Array.from({ length: 100 }, (_, x) => Array.from({ length: 50 }, (_, z) =>
+      [start.offset(x - 75, -53, z - 25), 'stone'])).flat(),
+  ], botPosition: start.offset(0.5, 0, 0.5), waterY: -65 });
+  for (const item of world.items) item.count = 10000;
+  const teleports = [];
+  world.task.bot.username = 'testbot';
+  world.task.bot.chat = command => {
+    assert.match(command, /^\/tp testbot /);
+    const position = new Vec3(...command.split(' ').slice(2).map(Number));
+    teleports.push(position);
+    world.task.bot.entity.position = position;
+  };
+  await world.task.run({ startX: start.x, startY: start.y, startZ: start.z,
+    endX: end.x, endY: end.y, endZ: end.z, allowCommands: false });
+  assert.equal(world.get(end).name, 'powered_rail');
+  assert.equal(world.get(end.offset(0, -1, 0)).name, 'redstone_block');
+  assert.ok(teleports.length > 0);
+  assert.deepEqual(world.invalidPlacements, []);
+});
+
+test('teleporte da descida exige piso e espaço livre na posição escolhida', async () => {
+  const world = descendingWorld(3);
+  const point = new Vec3(20, 60, 20);
+  world.applyServerBlock(point.offset(1, -1, 0), 'stone');
+  world.applyServerBlock(point.offset(1, 1, 0), 'stone');
+  await world.task.positionForDescent(point);
+  assert.equal(world.teleports.length, 0, 'não usa posição com cabeça bloqueada nem posições sem piso');
+  world.applyServerBlock(point.offset(1, 1, 0), 'air');
+  await world.task.positionForDescent(point);
+  assert.deepEqual(world.teleports, [point.offset(1.5, 0, 0.5)]);
 });
