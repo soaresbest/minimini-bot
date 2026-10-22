@@ -17,6 +17,7 @@ function terrainRun(blockNameAt, start = { x: 0, y: 64, z: 0 }, maximumBlocks = 
     },
   };
   const task = new RailwayTask({ bot }, new AbortController().signal);
+  task.prepareDescentSupport = async () => {};
   task.buildCell = async cell => {
     const point = new Vec3(cell.position.x, cell.position.y, cell.position.z);
     assert.equal(bot.blockAt(point).name, 'air', 'o trilho fica acima do piso, fora de líquidos e paredes');

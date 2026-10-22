@@ -587,3 +587,101 @@ for (const material of ['sand', 'red_sand']) {
     assert.equal(world.items.find(item => item.name === 'stone').count, 64);
   });
 }
+
+function descendingWorld(length = 14) {
+  const start = new Vec3(0, 80, 0);
+  const end = new Vec3(length, 80 - length, 0);
+  const world = railwayWorld({
+    blocks: [[start, 'powered_rail'], [start.offset(0, -1, 0), 'redstone_block'],
+      [end.offset(0, -1, 0), 'stone']],
+    botPosition: start.offset(0.5, 0, 0.5), waterY: -65,
+  });
+  return { ...world, start, end, action: { startX: start.x, startY: start.y, startZ: start.z,
+    endX: end.x, endY: end.y, endZ: end.z, allowCommands: false } };
+}
+
+test('calcula descida sobre vazio e constrói apoios e trilhos de baixo para cima além do lote', async () => {
+  const world = descendingWorld();
+  await world.task.run(world.action);
+  const rails = world.placed.filter(entry => ['rail', 'powered_rail'].includes(entry.name));
+  assert.deepEqual(rails.map(entry => entry.position.x), Array.from({ length: 14 }, (_, i) => 14 - i));
+  assert.equal(new Set(rails.map(entry => entry.position.toString())).size, 14);
+  assert.deepEqual(rails.filter(entry => entry.name === 'powered_rail').map(entry => entry.position.x), [14, 12, 9, 6, 3]);
+  const firstRail = world.placed.findIndex(entry => entry === rails[0]);
+  assert.ok(world.placed.slice(firstRail).every(entry => ['rail', 'powered_rail'].includes(entry.name)),
+    'todos os pisos estão prontos antes de colocar os trilhos');
+  for (let x = 1; x <= 14; x++) {
+    const point = new Vec3(x, 80 - x, 0);
+    const powered = x % 3 === 0 || x === 14;
+    assert.equal(world.get(point).name, powered ? 'powered_rail' : 'rail');
+    assert.equal(world.get(point.offset(0, -1, 0)).name, powered ? 'redstone_block' : 'stone');
+    assert.equal(world.get(point.offset(-1, 0, 0)).boundingBox, 'block', 'face alta sustenta o trilho inclinado');
+  }
+  assert.equal(world.get(world.start).name, 'powered_rail');
+  assert.deepEqual(world.invalidPlacements, []);
+});
+
+for (const phase of ['supports', 'rails']) {
+  test(`retoma descida interrompida na fase ${phase} sem repetir o que já concluiu`, async () => {
+    const world = descendingWorld(6);
+    const original = phase === 'supports' ? world.task.prepareDescentSupport.bind(world.task) : world.task.buildCell.bind(world.task);
+    const method = phase === 'supports' ? 'prepareDescentSupport' : 'buildCell';
+    world.task[method] = async (cell, ...args) => {
+      if (cell.index === 3) throw new Error('conexão perdida');
+      return original(cell, ...args);
+    };
+    await assert.rejects(world.task.run(world.action), /conexão perdida/);
+    const checkpoint = structuredClone(world.task.checkpoint);
+    assert.equal(checkpoint.descentState.phase, phase);
+    const priorRails = world.placed.filter(entry => ['rail', 'powered_rail'].includes(entry.name)).map(entry => entry.position.toString());
+    const resumed = new RailwayTask(world.task.controller, new AbortController().signal);
+    await resumed.run(world.action, checkpoint);
+    const allRails = world.placed.filter(entry => ['rail', 'powered_rail'].includes(entry.name));
+    assert.equal(allRails.length, 6);
+    for (const position of priorRails) assert.equal(allRails.filter(entry => entry.position.toString() === position).length, 1);
+    assert.equal(resumed.descentState, null);
+    assert.equal(resumed.checkpoint.built, 6);
+  });
+}
+
+test('descida cria coluna de fundação de baixo para cima antes do degrau inferior', async () => {
+  const world = descendingWorld(3);
+  world.applyServerBlock(world.end.offset(0, -1, 0), 'air');
+  world.applyServerBlock(world.end.offset(0, -5, 0), 'stone');
+  await world.task.run(world.action);
+  const foundation = world.placed.filter(entry => entry.position.x === 3 && entry.position.y < world.end.y);
+  assert.deepEqual(foundation.map(entry => entry.position.y), [73, 74, 75, 76]);
+  assert.equal(foundation.at(-1).name, 'redstone_block');
+});
+
+test('base desconhecida impede fundação sem colocar blocos no vazio descarregado', async () => {
+  const world = descendingWorld(3);
+  world.applyServerBlock(world.end.offset(0, -1, 0), 'air');
+  const read = world.task.bot.blockAt;
+  world.task.bot.blockAt = point => point.y <= 75 ? null : read(point);
+  await assert.rejects(world.task.run(world.action), { code: 'RAILWAY_NO_SUPPORT' });
+  assert.deepEqual(world.placed, []);
+});
+
+test('stop durante os apoios interrompe a descida antes de colocar trilhos', async () => {
+  const world = descendingWorld(6);
+  const abort = new AbortController();
+  world.task.signal = abort.signal;
+  const prepare = world.task.prepareDescentSupport.bind(world.task);
+  let calls = 0;
+  world.task.prepareDescentSupport = async (...args) => {
+    calls++;
+    await prepare(...args);
+    abort.abort();
+  };
+  await assert.rejects(world.task.run(world.action), { name: 'AbortError' });
+  assert.equal(calls, 1);
+  assert.ok(world.placed.every(entry => !['rail', 'powered_rail'].includes(entry.name)));
+});
+
+test('sem pedra a descida interrompe os apoios e não coloca os trilhos', async () => {
+  const world = descendingWorld(6);
+  world.items.find(item => item.name === 'stone').count = 0;
+  await assert.rejects(world.task.run(world.action), /stone/);
+  assert.ok(world.placed.every(entry => !['rail', 'powered_rail'].includes(entry.name)));
+});

@@ -129,6 +129,8 @@ export class RailwayTask {
     this.lastCompleted = null;
     this.pendingCell = null;
     this.planningHistory = [];
+    this.descentState = null;
+    this.prebuiltDescent = new Map();
   }
 
   async run(action, resume = null) {
@@ -140,6 +142,8 @@ export class RailwayTask {
       this.lastCompleted = resume.lastCompleted;
       this.contourDirection = resume.contourDirection;
       this.planningHistory = resume.planningHistory ?? [];
+      this.descentState = resume.descentState ?? null;
+      this.prebuiltDescent = new Map(resume.prebuiltDescent ?? []);
       this.allowCommands = resume.allowCommands;
     } else {
       if (action.player !== undefined) {
@@ -186,7 +190,8 @@ export class RailwayTask {
       this.checkpoint = structuredClone({ start, end, current, previous, forcedFirst: path?.[1] ?? forcedFirst,
         plannedPath: path, built, lastPowered, builtColumns: [...builtColumns], initialBuilt,
         completedRailColumns: [...this.completedRailColumns], lastCompleted: this.lastCompleted,
-        contourDirection: this.contourDirection, allowCommands: this.allowCommands, planningHistory: this.planningHistory });
+        contourDirection: this.contourDirection, allowCommands: this.allowCommands, planningHistory: this.planningHistory,
+        descentState: this.descentState, prebuiltDescent: [...this.prebuiltDescent] });
     };
     this.log('inicio', { start, end, allowCommands: this.allowCommands });
     const startedAt = Date.now();
@@ -197,11 +202,12 @@ export class RailwayTask {
         await this.buildCellWithRetry({ index: 0, position: start, previous: null, powered: true });
       }
       checkpoint(true);
+      if (this.descentState) await this.buildDescent(null, () => checkpoint(true));
 
       while (!samePosition(current, end)) {
         this.signal.throwIfAborted();
         const remaining = horizontalDistance(current, end);
-        if (!plannedPath || plannedPath.length <= 2) {
+        if (!plannedPath || (plannedPath.length <= 2 && !this.prebuiltDescent.size)) {
           const planStarted = Date.now();
           plannedPath = await this.planTerrainPath({
             start: current,
@@ -210,7 +216,7 @@ export class RailwayTask {
             forcedFirst,
             blocked: (x, z) => builtColumns.has(`${x},${z}`),
             goalDistance: remaining <= PLAN_HORIZON ? 0 : remaining - PLAN_HORIZON,
-            heightsAt: (x, z, y, from) => this.terrainRailHeights(x, z, y, from),
+            heightsAt: (x, z, y, from) => this.terrainRailHeights(x, z, y, from, Number.isInteger(end.y) && end.y < current.y ? end.y : null),
             costAt: (x, y, z) => {
               const floor = this.blockAt(new Vec3(x, y - 1, z));
               return AIR.has(floor?.name) ? 4 : LIQUID.has(floor?.name) ? 2 : 0;
@@ -229,7 +235,7 @@ export class RailwayTask {
         // bot voltar ao obstáculo. Reserve a última posição para conhecer a
         // orientação do próximo trilho antes de terminar o trecho atual.
         const path = plannedPath;
-        const reserve = samePosition(path.at(-1), end) ? 0 : 1;
+        const reserve = samePosition(path.at(-1), end) || this.prebuiltDescent.size ? 0 : 1;
         const count = Math.min(BUILD_BATCH, path.length - 1 - reserve);
         if (count < 1) throw new RailwayError('o planejamento do terreno não avançou');
         let builtOffset = 0;
@@ -247,7 +253,28 @@ export class RailwayTask {
 
           const cell = { index, position, previous: current, powered, slope, corner };
           this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
-          await this.buildCellWithRetry(cell);
+          if (position.y < current.y && !this.prebuiltDescent.has(index)) {
+            // Calcule a alimentação na ordem da rota, mas construa a rampa
+            // inteira na ordem inversa, inclusive além do limite do lote.
+            const cells = [];
+            let powerIndex = lastPowered;
+            for (let step = offset; step < path.length && path[step].y < path[step - 1].y; step++) {
+              const candidate = path[step];
+              const after = path[step + 1] ?? null;
+              const cellIndex = built + step - offset + 1;
+              const turn = isCorner(path[step - 1], candidate, after);
+              const energize = !turn && (samePosition(candidate, end) || cellIndex - powerIndex >= 3);
+              if (energize) powerIndex = cellIndex;
+              cells.push({ index: cellIndex, position: candidate, previous: path[step - 1],
+                powered: energize, slope: true, corner: turn });
+            }
+            await this.buildDescent(cells, () => checkpoint(true, path.slice(offset - 1)));
+          }
+          const prebuilt = this.prebuiltDescent.get(index);
+          if (prebuilt && samePosition(prebuilt, position)) {
+            this.prebuiltDescent.delete(index);
+            this.lastCompleted = { index, position };
+          } else await this.buildCellWithRetry(cell);
           built = index;
           if (powered) lastPowered = index;
           builtColumns.add(columnKey(position));
@@ -271,7 +298,7 @@ export class RailwayTask {
   }
 
   log(event, details = {}) {
-    if (event === 'plano') this.planningHistory.push(structuredClone({ time: new Date().toISOString(), ...details }));
+    if (event === 'plano' || event === 'plano_descida') this.planningHistory.push(structuredClone({ time: new Date().toISOString(), ...details }));
     this.controller.manager?.log?.(`[railway] ${JSON.stringify({
       time: new Date().toISOString(), bot: this.bot.username, event, ...details,
     })}`);
@@ -433,13 +460,14 @@ export class RailwayTask {
     return null;
   }
 
-  terrainRailHeights(x, z, currentY, previous = null) {
+  terrainRailHeights(x, z, currentY, previous = null, descentGoalY = null) {
     const at = y => this.blockAt(new Vec3(x, y, z));
-    // Rampas acompanham o terreno; sobre ar, estenda o piso na altura atual.
+    // Sobre ar, desça somente para atender a um destino explicitamente mais baixo.
     // Líquido serve como apoio substituível, nunca como espaço para o carrinho.
     return [currentY - 1, currentY, currentY + 1].filter(y => {
       const floor = at(y - 1);
-      return (this.isFloorCandidate(floor) || (y === currentY && AIR.has(floor?.name)))
+      return (this.isFloorCandidate(floor) || (AIR.has(floor?.name) && (y === currentY
+        || (Number.isInteger(descentGoalY) && y === currentY - 1 && y >= descentGoalY))))
         && this.isPassable(at(y)) && this.hasClearance(x, z, y, previous);
     });
   }
@@ -467,16 +495,111 @@ export class RailwayTask {
     });
   }
 
-  async buildCellWithRetry(cell) {
+  async buildDescent(cells, saveCheckpoint) {
+    if (!this.descentState) {
+      this.descentState = { cells, phase: 'supports', cursor: cells.length - 1 };
+      this.log('plano_descida', { cells, order: 'baixo_para_cima' });
+      saveCheckpoint();
+    }
+    const state = this.descentState;
+    if (state.phase === 'supports') {
+      while (state.cursor >= 0) {
+        this.signal.throwIfAborted();
+        const cell = state.cells[state.cursor];
+        this.pendingCell = cell;
+        await this.buildCellWithRetry(cell, () => this.prepareDescentSupport(cell, state.cells[state.cursor + 1] ?? null));
+        state.cursor--;
+        saveCheckpoint();
+      }
+      state.phase = 'rails';
+      state.cursor = state.cells.length - 1;
+      saveCheckpoint();
+    }
+    while (state.cursor >= 0) {
+      this.signal.throwIfAborted();
+      const cell = state.cells[state.cursor];
+      await this.buildCellWithRetry(cell);
+      this.prebuiltDescent.set(cell.index, cell.position);
+      state.cursor--;
+      saveCheckpoint();
+    }
+    this.descentState = null;
+    saveCheckpoint();
+  }
+
+  async prepareDescentSupport(cell, lowerCell) {
+    const point = vec(cell.position);
+    await this.moveNear(point);
+    this.validateFloor(point);
+    for (let height = 2; height >= 0; height--) await this.clear(point.offset(0, height, 0));
+    const support = point.offset(0, -1, 0);
+    if (lowerCell) {
+      // Dois pisos em diagonal não fornecem uma face de colocação entre si.
+      // A pedra abaixo do piso superior conecta os degraus lateralmente.
+      const connector = support.offset(0, -1, 0);
+      if (!this.isSolid(this.blockAt(connector))) {
+        await this.moveOffDescentBlock(connector, vec(lowerCell.position));
+        await this.replace(connector, 'stone', { preferredReference: vec(lowerCell.position).offset(0, -1, 0) });
+      }
+    }
+    if (!this.findReference(support) && !this.isSolid(this.blockAt(support))) {
+      await this.buildDescentFoundation(support);
+    }
+    // Areia existente continua preservada sob trilhos comuns.
+    const item = cell.powered ? 'redstone_block' : SAND.has(this.blockAt(support)?.name) ? null : 'stone';
+    if (item && this.blockAt(support)?.name !== item) {
+      await this.moveOffDescentBlock(support, lowerCell ? vec(lowerCell.position) : point);
+      await this.prepareRailFloor(point, item, lowerCell?.position ?? null, 'descida');
+    }
+    this.log('apoio_descida_concluido', { index: cell.index, position: support, item: this.blockAt(support)?.name });
+  }
+
+  async moveOffDescentBlock(target, standing) {
+    const position = this.bot.entity.position;
+    const halfWidth = (this.bot.entity.width ?? 0.6) / 2;
+    const height = this.bot.entity.height ?? 1.8;
+    const overlaps = target.x < position.x + halfWidth && target.x + 1 > position.x - halfWidth
+      && target.z < position.z + halfWidth && target.z + 1 > position.z - halfWidth
+      && target.y < position.y + height && target.y + 1 > position.y;
+    if (!overlaps) return;
+    this.log('liberando_apoio_descida', { target, standing });
+    await this.controller.moveToGoal(new goals.GoalBlock(standing.x, standing.y, standing.z), this.signal, {
+      onStalled: reason => this.teleportNear(standing, reason),
+    });
+    this.signal.throwIfAborted();
+  }
+
+  async buildDescentFoundation(support) {
+    const column = [];
+    const minY = this.bot.game?.minY ?? -64;
+    for (let y = support.y - 1; y >= minY; y--) {
+      this.signal.throwIfAborted();
+      const position = new Vec3(support.x, y, support.z);
+      const block = this.blockAt(position);
+      if (!block) throw new RailwayError('a base da descida ainda não está carregada', 'RAILWAY_NO_SUPPORT');
+      if (this.isSolid(block)) {
+        for (const point of column.reverse()) {
+          await this.moveNear(point.offset(0, 1, 0));
+          await this.replace(point, 'stone', { buildSupport: false });
+        }
+        return;
+      }
+      if (!AIR.has(block.name) && !LIQUID.has(block.name)) break;
+      column.push(position);
+    }
+    throw new RailwayError('não encontrei uma base carregada para sustentar a descida', 'RAILWAY_NO_SUPPORT');
+  }
+
+  async buildCellWithRetry(cell, operation = () => this.buildCell(cell)) {
     try {
-      return await this.buildCell(cell);
+      return await operation();
     } catch (error) {
       this.signal.throwIfAborted();
       if (error.code !== 'RAILWAY_TERRAIN_CHANGED') throw error;
       this.log('aguardando_terreno', { position: cell.position, waitMs: 10000 });
       await delay(10000, undefined, { signal: this.signal });
       try {
-        return await this.buildCell(cell);
+        return await operation();
       } catch (retryError) {
         this.signal.throwIfAborted();
         if (retryError.code !== 'RAILWAY_TERRAIN_CHANGED'
