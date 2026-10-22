@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import minecraftData from 'minecraft-data';
 import vec3Package from 'vec3';
+import blockLoader from 'prismarine-block';
+import Move from 'mineflayer-pathfinder/lib/move.js';
 import { navigationMovements, configurePathfinderSearch, navigationWaypoints } from '../src/navigation.js';
 import { RailwayTask } from '../src/railway.js';
 
 const { Vec3 } = vec3Package;
 
-test('movimentos reais permitem escavação e usam IDs de itens para terra e pedregulho', () => {
+test('movimentos reais permitem escavação e usam IDs de itens para terra, pedregulho e pedra', () => {
   const registry = minecraftData('1.21.5');
   const bot = { registry, inventory: { items: () => [
     { type: registry.itemsByName.dirt.id, count: 5 },
@@ -16,8 +18,9 @@ test('movimentos reais permitem escavação e usam IDs de itens para terra e ped
   ] } };
   const movements = navigationMovements(bot);
   assert.equal(movements.canDig, true);
-  assert.deepEqual(movements.scafoldingBlocks, [registry.itemsByName.dirt.id, registry.itemsByName.cobblestone.id]);
-  assert.equal(movements.countScaffoldingItems(), 12);
+  assert.equal(movements.allow1by1towers, true);
+  assert.deepEqual(movements.scafoldingBlocks, [registry.itemsByName.dirt.id, registry.itemsByName.cobblestone.id, registry.itemsByName.stone.id]);
+  assert.equal(movements.countScaffoldingItems(), 76);
   const pathfinder = { thinkTimeout: 5000 };
   configurePathfinderSearch(pathfinder);
   assert.equal(pathfinder.thinkTimeout, 25000);
@@ -61,4 +64,56 @@ test('stop entre checkpoints impede navegar até o próximo', async () => {
     moveToGoal: async () => { moves++; abort.abort(); } };
   await assert.rejects(new RailwayTask(controller, abort.signal).moveNear(new Vec3(200, 64, 0)), { name: 'AbortError' });
   assert.equal(moves, 1);
+});
+
+
+function caveMovements(count) {
+  const registry = minecraftData('1.21.5');
+  const Block = blockLoader('1.21.5');
+  const bot = { registry, inventory: { items: () => count ? [{ type: registry.itemsByName.stone.id, count }] : [] },
+    blockAt: position => {
+      const name = position.x === 0 && position.y === 63 ? 'stone' : 'cave_air';
+      const block = Block.fromStateId(registry.blocksByName[name].defaultState, 0);
+      block.position = position.clone();
+      return block;
+    } };
+  return navigationMovements(bot);
+}
+
+test('pathfinder planeja ponte de três blocos sobre cave_air usando pedra', () => {
+  const movements = caveMovements(3);
+  let node = new Move(0, 64, 0, movements.countScaffoldingItems(), 0);
+  for (let x = 1; x <= 3; x++) {
+    const neighbors = [];
+    movements.getMoveForward(node, { x: 1, z: 0 }, neighbors);
+    assert.equal(neighbors.length, 1);
+    const next = neighbors[0];
+    assert.equal(next.x, x);
+    assert.equal(next.remainingBlocks, 3 - x);
+    assert.deepEqual(next.toBreak, []);
+    assert.deepEqual(next.toPlace, [{ x: x - 1, y: 63, z: 0, dx: 1, dy: 0, dz: 0 }]);
+    node = next;
+  }
+  const neighbors = [];
+  movements.getMoveForward(node, { x: 1, z: 0 }, neighbors);
+  assert.deepEqual(neighbors, [], 'não planeja ponte além dos materiais disponíveis');
+});
+
+test('pathfinder permite subir colocando pedra sob os pés em cave_air', () => {
+  const movements = caveMovements(1);
+  const neighbors = [];
+  movements.getMoveUp(new Move(0, 64, 0, movements.countScaffoldingItems(), 0), neighbors);
+  assert.equal(neighbors.length, 1);
+  assert.equal(neighbors[0].y, 65);
+  assert.equal(neighbors[0].remainingBlocks, 0);
+  assert.deepEqual(neighbors[0].toPlace, [{ x: 0, y: 63, z: 0, dx: 0, dy: 1, dz: 0, jump: true }]);
+});
+
+test('sem blocos no inventário não planeja pontes nem torres', () => {
+  const movements = caveMovements(0);
+  const node = new Move(0, 64, 0, movements.countScaffoldingItems(), 0);
+  const neighbors = [];
+  movements.getMoveForward(node, { x: 1, z: 0 }, neighbors);
+  movements.getMoveUp(node, neighbors);
+  assert.deepEqual(neighbors, []);
 });

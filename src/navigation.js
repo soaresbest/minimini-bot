@@ -8,11 +8,11 @@ export const NAVIGATION_CHECKPOINT_DISTANCE = 64;
 export function navigationMovements(bot) {
   const movements = new Movements(bot);
   movements.canDig = true;
-  movements.allow1by1towers = false;
+  movements.allow1by1towers = true;
   movements.allowParkour = false;
   movements.allowFreeMotion = false;
   // A API 2.4.5 usa esta grafia e espera IDs de itens, não de blocos.
-  movements.scafoldingBlocks = ['dirt', 'cobblestone'].map(name => bot.registry.itemsByName[name].id);
+  movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'].map(name => bot.registry.itemsByName[name].id);
   return movements;
 }
 
