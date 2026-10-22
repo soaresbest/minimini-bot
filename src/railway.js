@@ -250,7 +250,10 @@ export class RailwayTask {
           const corner = isCorner(current, position, next);
           const endpoint = samePosition(position, end);
           const maximumGap = slope ? 3 : 8;
-          const powered = !corner && (endpoint || index - lastPowered >= maximumGap);
+          // Trilhos eletrificados não fazem curvas: reponha o impulso na
+          // primeira posição reta após a curva, inclusive ao retomar um lote.
+          const afterCorner = isCorner(previous, current, position);
+          const powered = !corner && (afterCorner || endpoint || index - lastPowered >= maximumGap);
 
           const cell = { index, position, previous: current, powered, slope, corner };
           this.controller.task = `construindo trilhos: ${index + 1} blocos; faltam aproximadamente ${horizontalDistance(position, end)}`;
@@ -264,7 +267,9 @@ export class RailwayTask {
               const after = path[step + 1] ?? null;
               const cellIndex = built + step - offset + 1;
               const turn = isCorner(path[step - 1], candidate, after);
-              const energize = !turn && (samePosition(candidate, end) || cellIndex - powerIndex >= 3);
+              const beforePrevious = step === offset ? previous : path[step - 2];
+              const afterTurn = isCorner(beforePrevious, path[step - 1], candidate);
+              const energize = !turn && (afterTurn || samePosition(candidate, end) || cellIndex - powerIndex >= 3);
               if (energize) powerIndex = cellIndex;
               cells.push({ index: cellIndex, position: candidate, previous: path[step - 1],
                 powered: energize, slope: true, corner: turn });

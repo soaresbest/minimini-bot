@@ -734,3 +734,20 @@ test('teleporte da descida exige piso e espaço livre na posição escolhida', a
   await world.task.positionForDescent(point);
   assert.deepEqual(world.teleports, [point.offset(1.5, 0, 0.5)]);
 });
+
+test('descida após curva recebe redstone e trilho eletrificado extra na primeira posição', async () => {
+  const world = descendingWorld(3);
+  const path = [[0, 80, 0], [1, 80, 0], [1, 79, 1], [1, 78, 2], [1, 77, 3]]
+    .map(([x, y, z]) => ({ x, y, z }));
+  const end = new Vec3(1, 77, 3);
+  world.applyServerBlock(end.offset(0, -1, 0), 'stone');
+  world.task.planTerrainPath = async () => path;
+  await world.task.run({ ...world.action, endX: end.x, endY: end.y, endZ: end.z });
+  const curve = new Vec3(1, 80, 0);
+  const after = new Vec3(1, 79, 1);
+  assert.equal(world.get(curve).name, 'rail');
+  assert.equal(world.get(after).name, 'powered_rail');
+  assert.equal(world.get(after.offset(0, -1, 0)).name, 'redstone_block');
+  assert.equal(world.get(after.offset(0, -1, 1)).name, 'rail');
+  assert.deepEqual(world.invalidPlacements, []);
+});

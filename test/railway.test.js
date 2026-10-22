@@ -851,3 +851,37 @@ test('cancelamento impede tp e interrompe a espera de confirmação', async () =
   await assert.rejects(task.teleportNear(new Vec3(20, 64, 0), 'parado'), { name: 'AbortError' });
   assert.equal(sent, 1);
 });
+
+for (const interrupted of [false, true]) {
+  test(`alimenta após curva na divisão de lotes${interrupted ? ' e reconexão' : ''}`, async () => {
+    const path = [...Array.from({ length: 13 }, (_, x) => ({ x, y: 64, z: 0 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ x: 12, y: 64, z: i + 1 }))];
+    const terrain = ({ y }) => y < 64 ? 'stone' : 'air';
+    const first = terrainRun(terrain);
+    first.task.planTerrainPath = async () => path;
+    let built = first.built;
+    if (interrupted) {
+      const build = first.task.buildCell;
+      first.task.buildCell = async cell => {
+        if (cell.index === 13) throw new Error('desconectado');
+        return build(cell);
+      };
+      await assert.rejects(runTo(first.task, path.at(-1)), /desconectado/);
+      const second = terrainRun(terrain, path[12]);
+      await second.task.run({}, structuredClone(first.task.checkpoint));
+      built = [...built, ...second.built];
+    } else await runTo(first.task, path.at(-1));
+    assert.equal(built.find(cell => cell.index === 12).powered, false);
+    assert.deepEqual(built.filter(cell => cell.powered).map(cell => cell.index), [0, 8, 13, 21, 22]);
+  });
+}
+
+test('curvas consecutivas recebem alimentação na primeira posição reta seguinte', async () => {
+  const { task, built } = terrainRun(({ y }) => y < 64 ? 'stone' : 'air');
+  const path = [[0, 0], [1, 0], [1, 1], [2, 1], [3, 1], [4, 1]]
+    .map(([x, z]) => ({ x, y: 64, z }));
+  task.planTerrainPath = async () => path;
+  await runTo(task, path.at(-1));
+  assert.deepEqual(built.filter(cell => cell.powered).map(cell => cell.index), [0, 3, 5]);
+  assert.ok(built.filter(cell => cell.corner).every(cell => !cell.powered));
+});
