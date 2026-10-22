@@ -751,3 +751,48 @@ test('descida após curva recebe redstone e trilho eletrificado extra na primeir
   assert.equal(world.get(after.offset(0, -1, 1)).name, 'rail');
   assert.deepEqual(world.invalidPlacements, []);
 });
+
+for (const reconnect of [false, true]) {
+  test(`túnel escava antes de entrar e constrói trilhos${reconnect ? ' após reconectar' : ''}`, async () => {
+    const blocks = [];
+    for (let x = 0; x <= 17; x++) {
+      for (let y = 63; y <= (x > 0 && x < 15 ? 66 : 63); y++) {
+        blocks.push([new Vec3(x, y, 0), 'stone']);
+      }
+    }
+    const world = railwayWorld({ blocks, botPosition: new Vec3(0.5, 64, 0.5), waterY: -65 });
+    const { task } = world;
+    let plans = 0;
+    task.planTerrainPath = async options => {
+      plans++;
+      return task.planTunnel({ ...options, blocked: (x, z) => z !== 0 || options.blocked(x, z) });
+    };
+    const move = task.moveNear.bind(task);
+    task.moveNear = async point => {
+      assert.notEqual(world.get(point).name, 'stone', 'não tenta entrar na parede antes da escavação');
+      return move(point);
+    };
+    const build = task.buildCell.bind(task);
+    if (reconnect) task.buildCell = async cell => {
+      if (cell.index === 4) throw new Error('desconectado');
+      return build(cell);
+    };
+    const action = { startX: 0, startY: 64, startZ: 0, endX: 17, endY: 64, endZ: 0, allowCommands: false };
+    if (reconnect) {
+      await assert.rejects(task.run(action), /desconectado/);
+      const checkpoint = structuredClone(task.checkpoint);
+      assert.equal(checkpoint.plannedPath[1].tunnel, true);
+      task.buildCell = build;
+      await task.run({}, checkpoint);
+    } else await task.run(action);
+    assert.ok(plans >= 2, 'reavalia o planejamento após cada trecho curto');
+    for (let x = 1; x <= 17; x++) {
+      const point = new Vec3(x, 64, 0);
+      assert.equal(world.get(point).name, x % 8 === 0 || x === 17 ? 'powered_rail' : 'rail');
+      assert.equal(world.get(point.offset(0, 1, 0)).name, 'air');
+      assert.equal(world.get(point.offset(0, 2, 0)).name, 'air');
+    }
+    assert.equal(world.dug.filter(p => p.y >= 64).length, 42);
+    assert.deepEqual(world.invalidPlacements, []);
+  });
+}

@@ -439,7 +439,11 @@ for (const { name, rail, previousY, allowed } of [
       assert.deepEqual(await plan(), Array.from({ length: 4 }, (_, x) => ({ x, y: 64, z: 0 })),
         'após esgotar a saída norte, faz a curva plana para o leste sem reutilizar o trecho anterior');
     } else {
-      await assert.rejects(plan, error => error.code === 'RAILWAY_NO_ROUTE');
+      const path = await plan();
+      assert.deepEqual(path[1], { x: 0, y: 64, z: -1, tunnel: true },
+        'abre túnel mantendo a saída norte, sem redirecionar o trilho anterior');
+      assert.deepEqual(path.at(-1), { x: 3, y: 64, z: 0, tunnel: true });
+      assert.equal(new Set(path.map(p => `${p.x},${p.z}`)).size, path.length);
     }
   });
 }

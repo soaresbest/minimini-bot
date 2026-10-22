@@ -290,7 +290,9 @@ export class RailwayTask {
           checkpoint(true, path.slice(offset));
         }
         forcedFirst = path[builtOffset + 1] ?? null;
-        plannedPath = path.slice(builtOffset);
+        // Reavalie uma saída natural após cada trecho escavado. O checkpoint
+        // mantém os pontos restantes se houver desconexão antes do recálculo.
+        plannedPath = path[builtOffset]?.tunnel ? null : path.slice(builtOffset);
       }
       this.log('concluido', { position: current, blocks: built + 1, durationMs: Date.now() - startedAt });
     } catch (error) {
@@ -304,7 +306,7 @@ export class RailwayTask {
   }
 
   log(event, details = {}) {
-    if (event === 'plano' || event === 'plano_descida') this.planningHistory.push(structuredClone({ time: new Date().toISOString(), ...details }));
+    if (event === 'plano' || event === 'plano_descida' || event === 'plano_tunel') this.planningHistory.push(structuredClone({ time: new Date().toISOString(), ...details }));
     this.controller.manager?.log?.(`[railway] ${JSON.stringify({
       time: new Date().toISOString(), bot: this.bot.username, event, ...details,
     })}`);
@@ -427,9 +429,59 @@ export class RailwayTask {
           throw new RailwayError(`não encontrei desvio pelo piso a partir de ${format(options.start)}; a busca pode ter atingido seu limite ou não haver continuação segura no terreno carregado`, 'RAILWAY_NO_ROUTE');
         }
       }
+    } catch (error) {
+      if (error?.code !== 'RAILWAY_NO_ROUTE') throw error;
+      return await this.planTunnel(options);
     } finally {
       this.planningBlocks = null;
     }
+  }
+
+  async planTunnel(options) {
+    this.signal.throwIfAborted();
+    const remaining = horizontalDistance(options.start, options.goal);
+    if (!remaining) throw new RailwayError('não há avanço horizontal para abrir um túnel até o destino', 'RAILWAY_NO_ROUTE');
+    // Abra trechos curtos na altura atual; a busca normal volta a procurar
+    // uma saída e rampas a cada lote, conforme o bot carrega novos chunks.
+    const path = await this.searchTerrainPath({ ...options,
+      goalDistance: Math.max(0, remaining - BUILD_BATCH),
+      radius: EXTENDED_SEARCH_RADIUS, maxNodes: EXTENDED_SEARCH_NODE_LIMIT,
+      heightsAt: (x, z, y) => this.canTunnelAt(new Vec3(x, y, z)) ? [y] : [],
+      costAt: (x, y, z) => [0, 1, 2].reduce((cost, height) =>
+        cost + (this.isPassable(this.blockAt(new Vec3(x, y + height, z))) ? 0 : 2), 0),
+    });
+    if (path.length < 2) throw new RailwayError('não encontrei continuação escavável para o túnel', 'RAILWAY_NO_ROUTE');
+    this.contourDirection = null;
+    const tunnel = path.map((position, index) => index ? { ...position, tunnel: true } : position);
+    this.log('plano_tunel', { from: options.start, to: path.at(-1), path: tunnel });
+    return tunnel;
+  }
+
+  canTunnelAt(point) {
+    const floor = this.blockAt(point.offset(0, -1, 0));
+    if (!this.isFloorCandidate(floor) && !AIR.has(floor?.name)) return false;
+    if (!this.hasClearance(point.x, point.z, point.y)) return false;
+    // Não abra faces que exponham água/lava, inclusive no teto após minerar.
+    if (LIQUID.has(this.blockAt(point.offset(0, 3, 0))?.name)) return false;
+    return [0, 1, 2].every(height => {
+      const block = this.blockAt(point.offset(0, height, 0));
+      return this.isPassable(block) || Boolean(block && !LIQUID.has(block.name) && block.diggable === true);
+    });
+  }
+
+  async openTunnelCell(cell) {
+    const point = vec(cell.position);
+    this.signal.throwIfAborted();
+    if (!this.canTunnelAt(point)) throw new RailwayError('o túnel contém líquido, bloco inquebrável ou terreno desconhecido', 'RAILWAY_TERRAIN_CHANGED');
+    // Trabalhe a partir do último trilho aberto, sem tentar navegar/teleportar
+    // para dentro da parede que ainda precisa ser escavada.
+    await this.moveNear(vec(cell.previous));
+    for (let height = 2; height >= 0; height--) {
+      this.signal.throwIfAborted();
+      if (!this.canTunnelAt(point)) throw new RailwayError('o terreno mudou durante a escavação do túnel', 'RAILWAY_TERRAIN_CHANGED');
+      await this.clear(point.offset(0, height, 0));
+    }
+    this.log('tunel_aberto', { index: cell.index, position: cell.position });
   }
 
   async planWideContour(options) {
@@ -648,6 +700,7 @@ export class RailwayTask {
     this.pendingCell = { index: cell.index, position: cell.position, powered: cell.powered };
     this.completedRailColumns ??= new Map();
     if (cell.previous) this.completedRailColumns.set(columnKey(cell.previous), cell.previous.y);
+    if (cell.position.tunnel) await this.openTunnelCell(cell);
     this.validateFloor(point);
     await this.moveNear(point);
     this.validateFloor(point);
