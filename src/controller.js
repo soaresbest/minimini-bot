@@ -5,9 +5,10 @@ import { ChatQueue } from './chat.js';
 import { HELP } from './commands.js';
 import { CraftingTask } from './crafting.js';
 import { RailwayTask } from './railway.js';
+import { navigationMovements, configurePathfinderSearch } from './navigation.js';
 import { clearRailway } from './rail-clear.js';
 
-const { Movements, goals } = pathfinderPackage;
+const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
 const HOSTILE = new Set(['zombie', 'husk', 'drowned', 'skeleton', 'stray', 'bogged', 'wither_skeleton', 'creeper', 'spider', 'cave_spider', 'silverfish', 'endermite', 'witch', 'pillager', 'vindicator', 'evoker', 'ravager', 'phantom', 'blaze', 'breeze', 'slime', 'magma_cube', 'zoglin', 'hoglin', 'guardian', 'elder_guardian']);
 const UNSAFE_FOOD = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chorus_fruit', 'suspicious_stew', 'chicken']);
@@ -74,13 +75,8 @@ export class BotController {
     this.life++;
     this.stop({ preserveResume: true });
     this.ready = true;
-    const movements = new Movements(this.bot);
-    movements.canDig = false;
-    movements.allow1by1towers = false;
-    movements.allowParkour = false;
-    movements.allowFreeMotion = false;
-    movements.scafoldingBlocks = [];
-    this.bot.pathfinder.setMovements(movements);
+    this.bot.pathfinder.setMovements(navigationMovements(this.bot));
+    configurePathfinderSearch(this.bot.pathfinder);
     this.manager.registerIdentity(this.bot.username);
     const life = this.life;
     const authentication = this.manager.authenticateServer(this, life).catch(() => {
@@ -142,6 +138,7 @@ export class BotController {
     return work;
   }
   setGoal(goal, dynamic = false) {
+    configurePathfinderSearch(this.bot.pathfinder);
     this.goal = { goal, dynamic };
     this.pathFailure = false;
     if (!this.eating) this.bot.pathfinder.setGoal(goal, dynamic);

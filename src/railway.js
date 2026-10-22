@@ -2,6 +2,7 @@ import pathfinderPackage from 'mineflayer-pathfinder';
 import vec3Package from 'vec3';
 import { setTimeout as delay, setImmediate as yieldToServer } from 'node:timers/promises';
 import { supportsRail } from './railway-support.js';
+import { navigationWaypoints } from './navigation.js';
 
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -10,7 +11,7 @@ const PLAN_HORIZON = 64;
 const BUILD_BATCH = 12;
 const SEARCH_RADIUS = 64;
 const EXTENDED_SEARCH_RADIUS = 96;
-const SEARCH_NODE_LIMIT = 12_000;
+const SEARCH_NODE_LIMIT = 25_000;
 const EXTENDED_SEARCH_NODE_LIMIT = 120_000;
 const GIVE_WAIT_MS = 4_000;
 const PLACE_ATTEMPTS = 3;
@@ -191,7 +192,10 @@ export class RailwayTask {
     const startedAt = Date.now();
     try {
       checkpoint(resume?.initialBuilt ?? false);
-      if (!resume?.initialBuilt) await this.buildCellWithRetry({ index: 0, position: start, previous: null, powered: true });
+      if (!resume?.initialBuilt) {
+        await this.moveNear(vec(start));
+        await this.buildCellWithRetry({ index: 0, position: start, previous: null, powered: true });
+      }
       checkpoint(true);
 
       while (!samePosition(current, end)) {
@@ -584,9 +588,13 @@ export class RailwayTask {
   async moveNear(point) {
     if (this.bot.entity.position.distanceTo(point) <= 2.5) return;
     this.log('aproximando', { target: point, botPosition: this.bot.entity.position });
-    await this.controller.moveToGoal(new goals.GoalNear(point.x, point.y, point.z, 2), this.signal, {
-      onStalled: reason => this.teleportNear(point, reason),
-    });
+    for (const waypoint of navigationWaypoints(this.bot.entity.position, point)) {
+      this.signal.throwIfAborted();
+      this.log('checkpoint_navegacao', { target: waypoint, destination: point });
+      await this.controller.moveToGoal(new goals.GoalNear(waypoint.x, waypoint.y, waypoint.z, 2), this.signal, {
+        onStalled: reason => this.teleportNear(waypoint, reason),
+      });
+    }
   }
 
   async teleportNear(point, reason) {
