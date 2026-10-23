@@ -66,6 +66,8 @@ Use uma versão do sistema operacional que ainda receba suporte do fabricante. A
 
 A instalação precisa de acesso HTTPS a `nodejs.org` e ao registro npm. A execução precisa de acesso ao servidor Minecraft e, se habilitada, à API do provedor de IA. O projeto usa Minecraft Java Edition; ele não inclui um servidor Minecraft nem configura contas Microsoft automaticamente.
 
+O recurso `cartlook(player)` usa o mesmo código nos três sistemas, sem dependências adicionais. Para controlar a câmera do jogador no carrinho, exige Minecraft Java 1.21.2+ e permissões de `/gamemode`, `/spectate`, `/execute` e `/rotate` no servidor. O instalador não concede essas permissões. O fluxo de câmera envia até 20 comandos por segundo; servidores com limitação de frequência podem precisar de ajuste pelo administrador.
+
 ## Instalação sem perguntas e atualização
 
 Para preparar dependências em automação, sem iniciar o bot nem solicitar sua configuração:

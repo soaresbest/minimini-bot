@@ -812,3 +812,44 @@ test('erro de conexão durante railway registra código e checkpoint', async t =
   assert.equal(saved[0].error.code, 'ECONNRESET');
   assert.equal(saved[0].checkpoint.current.x, 3);
 });
+
+test('cartlook direto nos dois modos preserva status/help e limpa ao parar, substituir, morrer ou desconectar', async t => {
+  for (const mode of ['default', 'ia']) {
+    for (const interruption of ['stop', 'follow', 'death', 'end']) {
+      const h = harness({ bots: [{ name: 'Bot1', mode }], llm: { providers: { openai: { apiKey: 'test-key' } } } }, { planner: async () => assert.fail('não consultar IA') });
+      t.after(h.close);
+      h.bot.protocolVersion = 775;
+      h.bot._client = new EventEmitter();
+      h.bot.game.gameMode = 'survival';
+      h.bot.physicsEnabled = true;
+      h.bot.chat = text => {
+        h.bot.sent.push(text);
+        if (text === '/gamemode spectator Bot1') h.bot.game.gameMode = 'spectator';
+        if (text === '/spectate Alice Bot1') h.bot._client.emit('camera', { cameraId: 2 });
+      };
+      h.controller.chat.intervalMs = 1;
+      await h.manager.handleChat(h.controller, 'Alice', '@Bot1 cartlook(Alice)');
+      for (let i = 0; !h.controller.task.startsWith('câmera do carrinho'); i++) {
+        assert.ok(i < 100); await delay(5);
+      }
+      const camera = h.controller.cartCamera;
+      // /spectate entre dimensões emite spawn, sem cancelar a tarefa.
+      h.bot.emit('spawn');
+      assert.equal(h.controller.cartCamera, camera);
+      await h.manager.handleChat(h.controller, 'Alice', '@Bot1 status');
+      await h.manager.handleChat(h.controller, 'Alice', '@Bot1 help');
+      await h.manager.handleChat(h.controller, 'Alice', '@Bot1 cartlook(@a)');
+      assert.equal(h.controller.cartCamera, camera);
+      assert.match(h.said.at(-1), /Formato: cartlook/);
+      if (interruption === 'stop' || interruption === 'follow') {
+        await h.manager.handleChat(h.controller, 'Alice', `@Bot1 ${interruption === 'stop' ? 'stop' : 'follow(Alice)'}`);
+      } else h.bot.emit(interruption);
+      await delay(5);
+      assert.equal(h.controller.cartCamera, null);
+      assert.equal(h.bot.physicsEnabled, true);
+      assert.equal(h.bot._client.listenerCount('camera'), 0);
+      if (interruption !== 'end') assert.deepEqual(h.bot.sent.slice(-2), ['/spectate', '/gamemode survival Bot1']);
+      if (interruption === 'follow') assert.equal(h.controller.following.player, 'Alice');
+    }
+  }
+});

@@ -196,6 +196,10 @@ export class BotManager {
       } catch (error) { this.respond(controller, username, text, error.message, true); }
       return;
     }
+    if (/^cartlook\b/i.test(text)) {
+      this.respond(controller, username, text, 'Formato: cartlook(player). Requer /gamemode, /spectate e /rotate; stop encerra.', true);
+      return;
+    }
     if (/^railclear\b/i.test(text)) {
       this.respond(controller, username, text, 'Formato: railclear(player). Requer /execute e /kill; stop encerra.', true);
       return;

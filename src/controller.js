@@ -7,6 +7,7 @@ import { CraftingTask } from './crafting.js';
 import { RailwayTask } from './railway.js';
 import { navigationMovements, configurePathfinderSearch } from './navigation.js';
 import { clearRailway } from './rail-clear.js';
+import { CartCamera } from './cart-camera.js';
 
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -72,6 +73,8 @@ export class BotController {
   say(message, priority = false) { this.chat.say(message, priority); }
   onSpawn() {
     if (this.closed) return;
+    // /spectate pode trocar a dimensão e emitir spawn sem ser uma nova sessão.
+    if (this.cartCamera) return;
     this.life++;
     this.stop({ preserveResume: true });
     this.ready = true;
@@ -229,6 +232,10 @@ export class BotController {
     signal.throwIfAborted();
     if (action.type === 'status') { this.say(this.status()); return; }
     if (action.type === 'help') { HELP.forEach(line => this.say(line)); return; }
+    if (action.type === 'cartlook') {
+      await new CartCamera(this, action.player, signal).run();
+      return;
+    }
     if (action.type === 'railclear') {
       await clearRailway(this, action.player, signal);
       return;
@@ -411,7 +418,7 @@ export class BotController {
     this.lastSurvivalWarning = Date.now();
   }
   async tick() {
-    if (!this.ready || this.closed || this.tickBusy) return;
+    if (!this.ready || this.closed || this.tickBusy || this.cartCamera) return;
     this.tickBusy = true;
     try {
       await this.eat();
