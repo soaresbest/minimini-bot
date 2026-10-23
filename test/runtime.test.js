@@ -853,3 +853,50 @@ test('cartlook direto nos dois modos preserva status/help e limpa ao parar, subs
     }
   }
 });
+
+test('login instala compatibilidade do chat antes dos comandos e protege cada reconexão', t => {
+  const config = baseConfig({ server: { host: 'localhost', registration: false } });
+  const writes = [];
+  const manager = new BotManager(config, {
+    log: () => {},
+    createBot: () => {
+      const bot = fakeBot();
+      bot.supportFeature = feature => feature === 'seperateSignedChatCommandPacket';
+      bot._client = {
+        _signedChat: message => writes.push({ original: message }),
+        write: (name, params) => writes.push({ name, params }),
+      };
+      bot._client.chat = bot._client._signedChat;
+      return bot;
+    },
+  });
+  t.after(() => manager.close());
+  manager.start();
+  const record = manager.records.get('bot1');
+  for (let connection = 0; connection < 2; connection++) {
+    const bot = record.bot;
+    bot.emit('login');
+    bot._client.chat('/rotate Alice 0 0');
+    assert.deepEqual(writes.at(-1), { name: 'chat_command', params: { command: 'rotate Alice 0 0' } });
+    bot._client.chat('Mensagem normal');
+    assert.deepEqual(writes.at(-1), { original: 'Mensagem normal' });
+    if (connection === 0) {
+      bot.emit('end');
+      clearTimeout(record.reconnectTimer);
+      record.reconnectTimer = null;
+      manager.connect(record);
+    }
+  }
+});
+
+test('kick de validação de chat mostra diagnóstico específico sem expor o restante do pacote', t => {
+  const logs = [];
+  const manager = new BotManager(baseConfig(), { log: text => logs.push(text), createBot: fakeBot });
+  t.after(() => manager.close());
+  manager.start();
+  manager.records.get('bot1').bot.emit('kicked', {
+    type: 'compound', value: { translate: { type: 'string', value: 'multiplayer.disconnect.chat_validation_failed' }, private: 'não mostrar' },
+  });
+  assert.match(logs.at(-1), /falha na validação das confirmações de chat/);
+  assert.ok(logs.every(line => !line.includes('não mostrar')));
+});

@@ -90,4 +90,5 @@ Para atualizar o aplicativo, encerre o bot, extraia um novo ZIP em uma pasta nov
 - Se `npm ci` falhar, confirme que o ZIP foi extraído por completo e contém `package-lock.json`, e que o registro npm está acessível. Não remova o arquivo de lock para contornar o erro.
 - Se o Node.js não conseguir executar em Linux, o instalador oferece preparar bibliotecas do sistema. Se ainda falhar, confira os requisitos de glibc/kernel/libstdc++ da tabela.
 - Os iniciadores informam quando Node.js 24 ou dependências estiverem ausentes e orientam executar o instalador novamente.
+- Se `cartlook` ou outros comandos forem seguidos de `Chat message validation failure`, atualize o código e reinicie o programa. A correção do protocolo de chat preserva as confirmações em conexões offline; não exige reinstalar dependências, apagar sessões ou mudar permissões do servidor.
 - Mensagens de autenticação ou conexão com Minecraft são produzidas pelo aplicativo depois da instalação; confira servidor, porta, versão e conta na configuração.

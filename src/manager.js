@@ -1,5 +1,6 @@
 import mineflayer from 'mineflayer';
 import { protocolCompatibility } from './protocol-compat.js';
+import { installChatCompatibility } from './chat-compat.js';
 import pathfinderPackage from 'mineflayer-pathfinder';
 import path from 'node:path';
 import { randomInt } from 'node:crypto';
@@ -68,14 +69,22 @@ export class BotManager {
         }
       }, spec.auth === 'microsoft' ? 180000 : 45000);
       record.watchdog.unref?.();
-      bot.once('login', () => { if (PLAYER_NAME.test(bot.username)) this.registerIdentity(bot.username); });
+      bot.once('login', () => {
+        installChatCompatibility(bot);
+        if (PLAYER_NAME.test(bot.username)) this.registerIdentity(bot.username);
+      });
       bot.once('spawn', () => { clearTimeout(record.watchdog); record.attempts = 0; });
       bot.on('error', error => {
         this.recordRailwayIncident(controller, 'erro_conexao', error);
         this.log(`[${spec.name}] falha de conexão (${safeErrorCode(error.code)}). Confira endereço, versão e autenticação.`);
       });
       bot.on('kicked', reason => {
-        const spam = /disconnect\.spam|kicked\.spam|spam/i.test(typeof reason === 'string' ? reason : JSON.stringify(reason) ?? '');
+        const description = typeof reason === 'string' ? reason : JSON.stringify(reason) ?? '';
+        if (/multiplayer\.disconnect\.chat_validation_failed|Chat message validation failure/i.test(description)) {
+          this.log(`[${spec.name}] desconectado pelo servidor: falha na validação das confirmações de chat (multiplayer.disconnect.chat_validation_failed). Atualize o bot e reinicie.`);
+          return;
+        }
+        const spam = /disconnect\.spam|kicked\.spam|spam/i.test(description);
         this.log(spam
           ? `[${spec.name}] desconectado pelo servidor por spam (excesso de mensagens ou comandos).`
           : `[${spec.name}] desconectado pelo servidor. Confira whitelist, conta, versão e regras do servidor.`);
