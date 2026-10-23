@@ -796,3 +796,43 @@ for (const reconnect of [false, true]) {
     assert.deepEqual(world.invalidPlacements, []);
   });
 }
+
+for (const retry of [false, true]) {
+  test(`fundação libera a colisão nas coordenadas do diagnóstico${retry ? ' também ao repetir colocação' : ''}`, async () => {
+    const world = descendingWorld(3);
+    const target = new Vec3(-29825591, 65, -441);
+    const bot = world.task.bot;
+    bot.entity.position = new Vec3(-29825590.49997477, 65, -440.5);
+    world.applyServerBlock(target.offset(0, -1, 0), 'stone');
+    assert.equal(world.task.overlapsBot(target), true, 'reproduz colisão do log');
+    const place = bot._placeBlockWithOptions;
+    let attempts = 0;
+    bot._placeBlockWithOptions = async (reference, face, options) => {
+      const destination = reference.position.plus(face);
+      assert.equal(world.task.overlapsBot(destination), false, 'nenhuma pedra é colocada dentro do bot');
+      if (destination.equals(target) && ++attempts === 1 && retry) {
+        bot.entity.position = target.offset(0.5, 0, 0.5);
+        throw new Error('servidor recusou e reposicionou o bot');
+      }
+      return place(reference, face, options);
+    };
+    await world.task.buildDescentFoundation(target.offset(0, 1, 0));
+    assert.equal(world.get(target).name, 'stone');
+    assert.equal(world.get(target.offset(1, -1, 0)).name, 'stone', 'andaime lateral permanece como apoio');
+    assert.equal(attempts, retry ? 2 : 1);
+    assert.ok(world.teleports.length >= 2);
+    assert.deepEqual(world.invalidPlacements, []);
+  });
+}
+
+test('fundação reutiliza apoio lateral existente e retoma coluna parcial sem repetir pedras', async () => {
+  const world = descendingWorld(3);
+  const target = new Vec3(20, 65, 20);
+  world.applyServerBlock(target.offset(0, -1, 0), 'stone');
+  world.applyServerBlock(target.offset(1, -1, 0), 'stone');
+  await world.task.buildDescentFoundation(target.offset(0, 1, 0));
+  assert.deepEqual(world.placed.map(p => p.position), [target]);
+  await world.task.buildDescentFoundation(target.offset(0, 2, 0));
+  assert.equal(world.placed.filter(p => p.position.equals(target)).length, 1);
+  assert.equal(world.get(target.offset(0, 1, 0)).name, 'stone');
+});

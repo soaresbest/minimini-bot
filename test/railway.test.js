@@ -889,3 +889,20 @@ test('curvas consecutivas recebem alimentação na primeira posição reta segui
   assert.deepEqual(built.filter(cell => cell.powered).map(cell => cell.index), [0, 3, 5]);
   assert.ok(built.filter(cell => cell.corner).every(cell => !cell.powered));
 });
+
+test('tp para bloco adjacente espera confirmação mesmo a um bloco de distância', async () => {
+  const { task } = terrainRun(() => 'air');
+  const destination = new Vec3(1, 64, 0);
+  let confirmed = false;
+  let timer;
+  task.bot.chat = () => {
+    timer = setTimeout(() => {
+      confirmed = true;
+      task.bot.entity.position = destination.offset(0.5, 0, 0.5);
+    }, 20);
+  };
+  try {
+    await task.teleportNear(destination, 'liberando_fundacao');
+    assert.equal(confirmed, true, 'não coloca bloco antes de sair da posição anterior');
+  } finally { clearTimeout(timer); }
+});

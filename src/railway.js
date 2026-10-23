@@ -637,19 +637,47 @@ export class RailwayTask {
     await this.moveNear(point);
   }
 
-  async moveOffDescentBlock(target, standing) {
+  overlapsBot(target) {
     const position = this.bot.entity.position;
     const halfWidth = (this.bot.entity.width ?? 0.6) / 2;
     const height = this.bot.entity.height ?? 1.8;
-    const overlaps = target.x < position.x + halfWidth && target.x + 1 > position.x - halfWidth
+    return target.x < position.x + halfWidth && target.x + 1 > position.x - halfWidth
       && target.z < position.z + halfWidth && target.z + 1 > position.z - halfWidth
       && target.y < position.y + height && target.y + 1 > position.y;
-    if (!overlaps) return;
+  }
+
+  async moveOffDescentBlock(target, standing) {
+    if (!this.overlapsBot(target)) return;
     this.log('liberando_apoio_descida', { target, standing });
     await this.controller.moveToGoal(new goals.GoalBlock(standing.x, standing.y, standing.z), this.signal, {
       onStalled: reason => this.teleportNear(standing, reason),
     });
     this.signal.throwIfAborted();
+  }
+
+  async positionForFoundation(target) {
+    this.signal.throwIfAborted();
+    const candidates = DIRECTIONS.map(({ x, z }) => target.offset(x, 0, z))
+      .filter(standing => this.isPassable(this.blockAt(standing))
+        && this.isPassable(this.blockAt(standing.offset(0, 1, 0))));
+    let standing = candidates.find(p => supportsRail(this.blockAt(p.offset(0, -1, 0))));
+    if (!standing) {
+      standing = candidates.find(p => AIR.has(this.blockAt(p.offset(0, -1, 0))?.name));
+      if (!standing || !supportsRail(this.blockAt(target.offset(0, -1, 0)))
+        || !this.isPassable(this.blockAt(target)) || !this.isPassable(this.blockAt(target.offset(0, 1, 0)))) {
+        throw new RailwayError('não há posição livre com apoio para construir a fundação', 'RAILWAY_NO_SUPPORT');
+      }
+      // Fique centralizado sobre a base já pronta enquanto monta o andaime
+      // lateral. Depois saia da coluna antes de acrescentar o próximo bloco.
+      await this.ensureMaterial('stone');
+      await this.teleportNear(target, 'centralizando_fundacao');
+      const platform = standing.offset(0, -1, 0);
+      await this.replace(platform, 'stone', { buildSupport: false,
+        preferredReference: target.offset(0, -1, 0) });
+      this.log('andaime_fundacao', { position: platform });
+    }
+    await this.teleportNear(standing, 'liberando_fundacao');
+    if (this.overlapsBot(target)) throw new RailwayError('o bot ainda ocupa o bloco da fundação', 'RAILWAY_PLACEMENT');
   }
 
   async buildDescentFoundation(support) {
@@ -662,8 +690,8 @@ export class RailwayTask {
       if (!block) throw new RailwayError('a base da descida ainda não está carregada', 'RAILWAY_NO_SUPPORT');
       if (this.isSolid(block)) {
         for (const point of column.reverse()) {
-          await this.moveNear(point.offset(0, 1, 0));
-          await this.replace(point, 'stone', { buildSupport: false });
+          await this.replace(point, 'stone', { buildSupport: false,
+            beforePlace: () => this.positionForFoundation(point) });
         }
         return;
       }
@@ -810,7 +838,7 @@ export class RailwayTask {
     this.log('teleportando', { target: destination, reason });
     this.bot.chat(`/tp ${this.bot.username} ${destination.x} ${destination.y} ${destination.z}`);
     const started = performance.now();
-    while (this.bot.entity.position.distanceTo(destination) > 1) {
+    while (this.bot.entity.position.distanceTo(destination) > 0.2) {
       this.signal.throwIfAborted();
       if (performance.now() - started > 5000) {
         throw new RailwayError('o servidor não confirmou o teleporte; confira a permissão para /tp', 'RAILWAY_TELEPORT_FAILED');
@@ -850,7 +878,7 @@ export class RailwayTask {
     }, this.signal);
   }
 
-  async replace(point, item, { preferredReference = null, buildSupport = true } = {}) {
+  async replace(point, item, { preferredReference = null, buildSupport = true, beforePlace = null } = {}) {
     let block = this.blockAt(point);
     if (!block) throw new RailwayError('o trecho seguinte ainda não foi carregado pelo servidor');
     if (block.name === item) return;
@@ -872,6 +900,7 @@ export class RailwayTask {
       }
       for (let attempt = 1; attempt <= PLACE_ATTEMPTS; attempt++) {
         await this.ensureMaterial(item);
+        await beforePlace?.();
         let reference = this.findReference(point, preferredReference);
         if (!reference && buildSupport && ['stone', 'redstone_block'].includes(item)) {
           await this.connectSupport(point, preferredReference);
@@ -897,7 +926,7 @@ export class RailwayTask {
           if (attempt === PLACE_ATTEMPTS) {
             throw new RailwayError(`o servidor recusou colocar ${item} em ${format(point)} após ${PLACE_ATTEMPTS} tentativas`, 'RAILWAY_PLACEMENT');
           }
-          await this.moveNear(point);
+          if (!beforePlace) await this.moveNear(point);
           continue;
         }
         if (this.blockAt(point)?.name === item) return;
