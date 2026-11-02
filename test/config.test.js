@@ -67,19 +67,20 @@ test('rejeita configuração inválida com mensagens úteis', () => {
   assert.throws(() => validateConfig({ ...base(), access: { allowedPlayers: ['*'] } }), /Jogadores autorizados/u);
   assert.throws(() => validateConfig({ ...base(), llm: { provider: 'unknown' } }), /openai, gemini, grok ou claude/u);
   assert.throws(() => validateConfig({ ...base(), server: { host: 'localhost', registration: 'sim' } }), /true ou false/u);
-  assert.throws(() => validateConfig({ ...base(), registrations: { 'localhost:25565': { bot1: '1234567x' } } }), /exatamente 8 dígitos/u);
+  assert.throws(() => validateConfig({ ...base(), registrations: { 'localhost:25565': { bot1: 'senha com espaço' } } }), /sem espaços/u);
+  assert.throws(() => validateConfig({ ...base(), registrations: { 'localhost:25565': { bot1: '' } } }), /sem espaços/u);
 });
 
 test('preserva senhas de registro por servidor e nome do bot', () => {
   const raw = base();
   raw.registrations = {
     'Example.COM:25565': { Bot1: '00123456', bot2: '87654321' },
-    '[::1]:25566': { Bot1: '11112222' }
+    '[::1]:25566': { Bot1: 'Minha#Senha1' }
   };
   const registrations = validateConfig(raw).registrations;
   assert.deepEqual(registrations, {
     'example.com:25565': { bot1: '00123456', bot2: '87654321' },
-    '[::1]:25566': { bot1: '11112222' }
+    '[::1]:25566': { bot1: 'Minha#Senha1' }
   });
 });
 
