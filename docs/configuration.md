@@ -46,6 +46,13 @@ O arquivo fica na home do usuário que executa o programa:
     "actionTimeoutMs": 120000,
     "autoEatAt": 16
   },
+  "tunnel": {
+    "width": 3,
+    "height": 3,
+    "wallBlock": "stone_bricks",
+    "centerFloorBlock": "smooth_stone",
+    "sideFloorBlock": "stone_bricks"
+  },
   "registrations": {
     "localhost:25565": {
       "bot1": "00123456"
@@ -61,6 +68,20 @@ O arquivo fica na home do usuário que executa o programa:
 `name` é o nome usado em menções, como `@bot1 status`, e deve ter de 1 a 16 letras, números ou `_`. Os nomes são únicos, sem diferenciar maiúsculas de minúsculas. `username` é o usuário usado na conexão. Em autenticação `offline`, ele pode ser omitido e recebe o mesmo valor de `name`; esse modo depende de o servidor aceitar autenticação offline.
 
 Para autenticação `microsoft`, informe em `username` o e-mail/identificador da conta Microsoft que possui Minecraft Java. O nome `name` continua sendo o identificador do bot nos comandos e não altera o nome do perfil Minecraft da conta. O login por código é solicitado na conexão. Cada bot precisa de uma conta diferente em servidores autenticados. Dados de autenticação ficam fora do repositório.
+
+## Túnel
+
+O objeto opcional `tunnel` usa os valores do exemplo acima quando os campos são omitidos. Edite o JSON e reinicie o bot para aplicar mudanças.
+
+| Campo | Uso |
+| --- | --- |
+| `width` | Largura livre ímpar entre 1 e 15 blocos, com uma faixa central. |
+| `height` | Altura livre entre 2 e 8 blocos. |
+| `wallBlock` | Mesmo material para paredes e teto. |
+| `centerFloorBlock` | Material da faixa central do piso. Com largura 1, reveste o piso inteiro. |
+| `sideFloorBlock` | Material das duas faixas laterais do piso. |
+
+Os campos de material aceitam IDs de blocos do Minecraft Java, com ou sem o prefixo `minecraft:`. Para usar barreiras, informe `barrier` ou `minecraft:barrier` no campo desejado. Os blocos usados são conferidos na versão à qual o bot está conectado antes de iniciar a obra.
 
 ## IA e chaves
 

@@ -62,6 +62,25 @@ function boolean(value, label, fallback) {
   return result;
 }
 
+function tunnelBlock(value, label, fallback) {
+  const block = string(value, label, fallback).replace(/^minecraft:/u, '');
+  if (!/^[a-z0-9_]{1,100}$/u.test(block)) throw new ConfigError(`${label} deve ser um identificador de bloco do Minecraft.`);
+  return block;
+}
+
+function tunnelConfig(value) {
+  const config = object(value, 'Túnel', {});
+  const width = integer(config.width, 'Largura do túnel', 3, 1, 15);
+  if (width % 2 === 0) throw new ConfigError('A largura do túnel deve ser ímpar para manter uma faixa central.');
+  return {
+    width,
+    height: integer(config.height, 'Altura livre do túnel', 3, 2, 8),
+    wallBlock: tunnelBlock(config.wallBlock, 'Bloco das paredes e do teto', 'stone_bricks'),
+    centerFloorBlock: tunnelBlock(config.centerFloorBlock, 'Bloco central do piso', 'smooth_stone'),
+    sideFloorBlock: tunnelBlock(config.sideFloorBlock, 'Bloco lateral do piso', 'stone_bricks'),
+  };
+}
+
 function minecraftName(value, label) {
   const result = string(value, label);
   if (!MINECRAFT_NAME.test(result)) {
@@ -233,6 +252,7 @@ export function validateConfig(input, { requireAiKeys = true } = {}) {
       ignoredPlayers: playerList(rawAccess.ignoredPlayers, 'Jogadores ignorados'),
     },
     settings,
+    tunnel: tunnelConfig(config.tunnel),
     registrations,
   };
 }

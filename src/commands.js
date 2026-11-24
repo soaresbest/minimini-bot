@@ -5,6 +5,7 @@ export const HELP = [
   'cartlook(player): câmera à frente no carrinho, interpolada em 700 ms; requer espectador e /rotate. stop encerra.',
   'railclear(player): remove mobs próximos dos trilhos continuamente; requer /execute e /kill. stop encerra.',
   'railway(player): constrói até o jogador usando o inventário. railway/trilhos: use ~ em qualquer coordenada; true permite /give e false usa só o inventário.',
+  'tunnel(x1,y1,z1,x2,y2,z2): constrói um túnel com os blocos do JSON. Requer /tp, /fill, /setblock e /gamemode. stop encerra.',
   'bots, botadd(nome[,default|ia[,provedor]]), botremove(nome), botconfig(nome,mode|provider|model,valor)',
   'Exemplo: @bot1 goto(100,60,300). IA: @bot1 venha até mim. Provedores: openai, gemini, grok, claude.'
 ];
@@ -25,6 +26,12 @@ export function parseCommand(text) {
   if (type === 'goto' && args.length === 3 && args.every(x => /^-?\d+(?:\.\d+)?$/.test(x))) {
     const [x, y, z] = args.map(Number);
     if (Math.abs(x) <= 29999984 && Math.abs(z) <= 29999984 && y >= -64 && y <= 319) return { type, x, y, z };
+  }
+  if (['tunnel', 'tunel'].includes(type) && args.length === 6 && args.every(x => /^-?\d+$/.test(x))) {
+    const [x1, y1, z1, x2, y2, z2] = args.map(Number);
+    if ([x1, z1, x2, z2].every(x => Math.abs(x) <= 29999984) && [y1, y2].every(Number.isSafeInteger)) {
+      return { type: 'tunnel', start: [x1, y1, z1], end: [x2, y2, z2] };
+    }
   }
   if (['railway', 'trilho', 'trilhos'].includes(type) && args.length === 1 && PLAYER_NAME.test(args[0])) {
     return { type: 'railway', player: args[0], allowCommands: false };

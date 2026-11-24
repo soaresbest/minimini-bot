@@ -8,6 +8,7 @@ import { RailwayTask } from './railway.js';
 import { navigationMovements, configurePathfinderSearch } from './navigation.js';
 import { clearRailway } from './rail-clear.js';
 import { CartCamera } from './cart-camera.js';
+import { TunnelTask } from './tunnel.js';
 
 const { goals } = pathfinderPackage;
 const { Vec3 } = vec3Package;
@@ -240,6 +241,10 @@ export class BotController {
       await clearRailway(this, action.player, signal);
       return;
     }
+    if (action.type === 'tunnel') {
+      await new TunnelTask(this, signal).run(action);
+      return;
+    }
     if (action.type === 'craft') {
       await new CraftingTask(this, signal).run(action.item, action.count);
       return;
@@ -418,7 +423,7 @@ export class BotController {
     this.lastSurvivalWarning = Date.now();
   }
   async tick() {
-    if (!this.ready || this.closed || this.tickBusy || this.cartCamera) return;
+    if (!this.ready || this.closed || this.tickBusy || this.cartCamera || this.tunnelTask) return;
     this.tickBusy = true;
     try {
       await this.eat();

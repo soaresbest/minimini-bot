@@ -37,6 +37,7 @@ Somente mensagens com uma menção completa, como `@bot1`, ativam o bot. Os nome
 | `@bot1 railway(Alex)` | Constrói trilhos da posição atual do bot até o jogador, usando apenas o inventário. |
 | `@bot1 railway(0,64,0,100,70,0,false)` | Constrói trilhos entre as duas posições usando apenas o inventário. |
 | `@bot1 railway(0,64,0,100,70,0,true)` | Faz a mesma obra e pode usar `/give` para repor os blocos permitidos. |
+| `@bot1 tunnel(0,64,0,160,64,0)` | Abre e reveste um túnel por comandos de servidor, usando os blocos do JSON. |
 | `@bot1 stop` | Cancela o pedido de IA e a tarefa atual, parando no local. |
 | `@bot1 status` | Informa vida, fome, tarefa, modo e inventário. |
 | `@bot1 help` | Mostra os comandos. |
@@ -90,6 +91,14 @@ Cada diagnóstico consulta uma região de **100 blocos em X × 100 em Z × 10 em
 Logs de debug e detalhes de busca não são enviados ao chat público; ficam no console do Node.js e nos diagnósticos persistentes. Respostas aos comandos e avisos de conclusão/falha continuam no chat. O terminal registra eventos JSON com o prefixo `[railway]`: início, planejamento, continuidade do desvio, ampliação da busca, ajuste de saída, aproximação, troca de piso, reposição de rampas, conexão de apoio, novas tentativas de colocação, reposição de materiais e cada bloco concluído. Conclusões, cancelamentos e falhas também são registrados; as falhas incluem coordenadas e os blocos ao redor para diagnóstico.
 
 `guard` enfrenta mobs hostis a até 8 blocos do protegido e limita a perseguição a 16 blocos do bot. Nas versões que informam o autor do dano, também reage por até 10 segundos a um agressor identificado pelo servidor, inclusive um jogador. Jogadores próximos não são atacados apenas por estarem perto. Em protocolos antigos sem identificação do agressor, permanece a proteção contra mobs hostis. Bots gerenciados não são escolhidos como agressores. Sem arma no inventário, usa a mão.
+
+### Túnel por comandos
+
+`@bot1 tunnel(x1,y1,z1,x2,y2,z2)` (ou `tunel`) usa coordenadas inteiras na dimensão atual. O Y indica a altura livre dos pés, com o piso um bloco abaixo. O trajeto avança primeiro em X, depois em Z, e usa um poço aberto no topo quando os pontos têm alturas diferentes.
+
+O bot entra temporariamente em modo espectador e usa `/tp` para carregar trechos de até 32 blocos. Ele escava e reveste com `/fill` e usa `/setblock` para células isoladas, substituindo os blocos existentes no volume do túnel. Precisa de permissão para esses comandos e para `/gamemode`. Ao concluir, retorna à posição e ao modo de jogo iniciais. `stop` interrompe os próximos comandos e preserva o que já foi construído.
+
+A seção `tunnel` do [JSON de configuração](docs/configuration.md#túnel) define largura, altura e materiais, incluindo `minecraft:barrier`. O comando direto funciona nos modos default e IA.
 
 ## Vários bots pelo chat
 
